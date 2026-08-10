@@ -109,6 +109,26 @@ gcloud iam service-accounts describe "$SA" --quiet >/dev/null 2>&1 \
   || gcloud iam service-accounts create "$SA_NAME" \
        --display-name="GitHub Actions deployer" --quiet
 
+# A freshly created service account is not immediately visible to the IAM
+# policy API. Creating one and binding a role to it in the next command fails
+# with "Service account ... does not exist" -- about the most misleading error
+# available, since you have just watched it be created and can see it in the
+# console. It is eventual consistency, not a mistake, and the only fix is to
+# wait. Observed at a few seconds; a minute of headroom costs nothing on a
+# script that runs once.
+retry() {
+  local n=0
+  until "$@"; do
+    n=$((n + 1))
+    [ "$n" -ge 12 ] && { printf '\n'; die "gave up after 12 attempts: $*"; }
+    printf '.'
+    sleep 5
+  done
+}
+printf '  waiting for IAM to see it '
+retry gcloud iam service-accounts describe "$SA" --quiet >/dev/null 2>&1
+printf ' visible\n'
+
 # run.admin: deploy services and jobs. artifactregistry.writer: push images.
 # secretmanager.secretAccessor: let the *deploy* read nothing, but Cloud Run
 # needs it at runtime and this SA is also the Cloud Run identity.
@@ -119,11 +139,13 @@ gcloud iam service-accounts describe "$SA" --quiet >/dev/null 2>&1 \
 # the schedule step fails with a bare PERMISSION_DENIED.
 for role in roles/run.admin roles/artifactregistry.writer \
             roles/secretmanager.secretAccessor roles/cloudscheduler.admin; do
-  gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
-    --member="serviceAccount:$SA" --role="$role" --quiet >/dev/null
+  # Retried for the same reason: the binding can still be rejected for a few
+  # seconds after `describe` starts answering.
+  retry gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+    --member="serviceAccount:$SA" --role="$role" --quiet >/dev/null 2>&1
 done
-gcloud iam service-accounts add-iam-policy-binding "$SA" \
-  --member="serviceAccount:$SA" --role=roles/iam.serviceAccountUser --quiet >/dev/null
+retry gcloud iam service-accounts add-iam-policy-binding "$SA" \
+  --member="serviceAccount:$SA" --role=roles/iam.serviceAccountUser --quiet >/dev/null 2>&1
 ok "$SA"
 
 # ---------------------------------------------------------------------------
