@@ -1,0 +1,178 @@
+/* A small, deliberate design system.
+   Colour is never the only signal (NFR-A / WCAG 2.2 AA): every coverage chip
+   carries a glyph and a word as well as a hue. */
+
+:root {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-2: #1e222b;
+  --border: #2a2f3a;
+  --text: #e8eaed;
+  --muted: #9aa2b1;
+  --accent: #6ea8fe;
+  --covered: #4ade80;
+  --partial: #fbbf24;
+  --missed: #f87171;
+  --contradicted: #fb7185;
+  --radius: 10px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --surface-2: #f0f2f5;
+    --border: #d9dee7;
+    --text: #16181d;
+    --muted: #5a6373;
+    --accent: #1a56db;
+    --covered: #157f3d;
+    --partial: #9a6700;
+    --missed: #b42318;
+    --contradicted: #9f1239;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+a { color: var(--accent); }
+
+/* Visible focus is a hard requirement, not a preference. */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.shell { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
+.wide { max-width: 1080px; }
+
+h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
+h2 { font-size: 1.25rem; margin: 32px 0 12px; letter-spacing: -0.01em; }
+h3 { font-size: 1rem; margin: 20px 0 8px; }
+p { margin: 0 0 14px; }
+.muted { color: var(--muted); }
+.small { font-size: 0.875rem; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin: 0 0 16px;
+}
+
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.stack > * + * { margin-top: 12px; }
+
+label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 0.9rem; }
+
+input, textarea, select, button {
+  font: inherit;
+  color: inherit;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 10px 12px;
+  width: 100%;
+}
+
+textarea { min-height: 160px; resize: vertical; line-height: 1.6; }
+
+button {
+  width: auto;
+  cursor: pointer;
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+  padding: 10px 18px;
+}
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.secondary { background: var(--surface-2); color: var(--text); border-color: var(--border); }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid currentColor;
+}
+.chip.covered { color: var(--covered); }
+.chip.partial { color: var(--partial); }
+.chip.missing, .chip.contradicted { color: var(--missed); }
+
+.concept {
+  border-left: 3px solid var(--border);
+  padding: 2px 0 2px 14px;
+  margin: 14px 0;
+}
+.concept.covered { border-left-color: var(--covered); }
+.concept.partial { border-left-color: var(--partial); }
+.concept.missing, .concept.contradicted { border-left-color: var(--missed); }
+
+blockquote {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 2px solid var(--border);
+  color: var(--muted);
+  font-style: italic;
+}
+
+.meter { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.meter > span { display: block; height: 100%; background: var(--accent); }
+
+.error {
+  border: 1px solid var(--missed);
+  color: var(--missed);
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+}
+
+.notice {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+
+code, .mono { font-family: var(--mono); font-size: 0.9em; }
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+}
+.skip-link:focus {
+  left: 12px;
+  top: 12px;
+  z-index: 10;
+  background: var(--surface);
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

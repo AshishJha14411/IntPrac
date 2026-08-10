@@ -1,0 +1,254 @@
+# Full stack. Everything runs in compose (no host toolchain required).
+#
+#   docker compose up --build            # api + worker + web + infra
+#   docker compose run --rm migrate      # apply migrations
+#   docker compose run --rm seed         # load taxonomy + question bank
+#   docker compose run --rm test         # backend test suite
+#
+# WORKERLESS MODE (ADR 010) -- how a hosted deploy runs, since a polling worker
+# cannot scale to zero and would be the whole bill. Name the services you want
+# and compose starts those plus their dependencies, leaving worker and beat out:
+#
+#   CELERY_TASK_ALWAYS_EAGER=true docker compose up -d --build api web
+#
+# Local dev defaults to the broker path on purpose: it is the mode with the
+# stronger guarantees, so bugs surface here rather than in the cheap one.
+#
+# NOTE (Appendix D.3 trap): MIGRATION_DATABASE_URL is pinned explicitly on every
+# service that can run migrations. It must never fall through to a .env value.
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_FORMAT: ${LOG_FORMAT:-console}
+  DATABASE_URL: postgresql+asyncpg://interview:interview@postgres:5432/interview
+  SYNC_DATABASE_URL: postgresql+psycopg://interview:interview@postgres:5432/interview
+  MIGRATION_DATABASE_URL: postgresql+psycopg://interview:interview@postgres:5432/interview
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  # ADR 010. true => no worker, no beat; the request drains its own outbox.
+  CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-false}
+  INLINE_DRAIN_BUDGET_SECONDS: ${INLINE_DRAIN_BUDGET_SECONDS:-10}
+  S3_ENDPOINT_URL: http://minio:9000
+  S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:9000}
+  S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
+  S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+  S3_BUCKET_UPLOADS: ${S3_BUCKET_UPLOADS:-interview-uploads}
+  JWT_SECRET: ${JWT_SECRET:-dev-only-secret-do-not-use-in-production}
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  # Passed through so a local override is actually honoured. Without these the
+  # app silently used its defaults whatever .env said -- which is the same class
+  # of bug as a flag that only exists in a cloud console.
+  AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+  AUTH_COOKIE_SAMESITE: ${AUTH_COOKIE_SAMESITE:-lax}
+  # Unset => the Google button is hidden and the routes 404, which is the right
+  # default for anyone cloning this without a Google project.
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8080/api/v1/auth/google/callback}
+  FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
+  GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+  LLM_ENABLED: ${LLM_ENABLED:-true}
+  # Declared so a .env override reaches the container, but with NO fallback of
+  # their own. A literal default here silently beat the one in config.py: the
+  # `:-` only applies when the var is unset in .env, so compose always set it,
+  # and the code default was dead. Empty means "use the code default".
+  LLM_GRADER_MODEL: ${LLM_GRADER_MODEL:-}
+  LLM_REDUCTION_MODEL: ${LLM_REDUCTION_MODEL:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: interview
+      POSTGRES_PASSWORD: interview
+      POSTGRES_DB: interview
+    ports: ["${POSTGRES_HOST_PORT:-5432}:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interview -d interview"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["${REDIS_HOST_PORT:-6379}:6379"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+    ports: ["${MINIO_HOST_PORT:-9000}:9000", "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"]
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: create the uploads bucket and a permissive dev CORS rule so the
+  # browser can PUT directly to storage.
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on:
+      minio: {condition: service_healthy}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${S3_ACCESS_KEY_ID:-minioadmin} ${S3_SECRET_ACCESS_KEY:-minioadmin} &&
+      mc mb --ignore-existing local/${S3_BUCKET_UPLOADS:-interview-uploads} &&
+      mc anonymous set none local/${S3_BUCKET_UPLOADS:-interview-uploads} &&
+      echo 'minio ready'
+      "
+    restart: "no"
+
+  # These mount the source so a migration you just wrote is the one that runs.
+  # A production deploy runs the same command against the baked image with no
+  # mount -- the image is the artifact there, the working tree is the artifact
+  # here.
+  migrate:
+    build:
+      context: ./backend
+      target: runtime
+    environment: *backend-env
+    depends_on:
+      postgres: {condition: service_healthy}
+    volumes:
+      - ./backend:/app:rw
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+
+  seed:
+    build:
+      context: ./backend
+      target: runtime
+    environment: *backend-env
+    depends_on:
+      postgres: {condition: service_healthy}
+    volumes:
+      - ./backend:/app:rw
+    command: ["python", "-m", "app.content.seed"]
+    restart: "no"
+
+  api:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      <<: *backend-env
+      UVICORN_RELOAD: ${UVICORN_RELOAD:-1}
+    ports: ["${API_HOST_PORT:-8080}:8080"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio: {condition: service_healthy}
+    volumes:
+      - ./backend:/app:rw
+    command: ["python", "-m", "app.entrypoints.api"]
+    healthcheck:
+      # Includes the API prefix -- see the Dockerfile comment.
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8080/api/v1/health/live').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    # NFR-S3: a deploy must never kill a live interview. Give the app time to
+    # drain in-flight sessions before SIGKILL.
+    stop_grace_period: 45s
+
+  worker:
+    build:
+      context: ./backend
+      target: runtime
+    environment: *backend-env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - ./backend:/app:rw
+    # Bulkheads (NFR-S5): grading and media never share a queue.
+    command: ["celery", "-A", "app.workers.celery_app.celery_app", "worker",
+              "-Q", "grading,parsing,media", "--concurrency", "2", "-l", "INFO"]
+    # Workers have no HTTP port -- an inherited healthcheck would fail forever.
+    healthcheck:
+      disable: true
+    stop_grace_period: 45s
+
+  beat:
+    build:
+      context: ./backend
+      target: runtime
+    environment: *backend-env
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    volumes:
+      - ./backend:/app:rw
+    # Drains the transactional outbox (NFR-S6) and runs retention jobs.
+    command: ["celery", "-A", "app.workers.celery_app.celery_app", "beat", "-l", "INFO"]
+    healthcheck:
+      disable: true
+
+  web:
+    build:
+      context: ./frontend
+      target: dev
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+      INTERNAL_API_BASE_URL: http://api:8080
+      NODE_ENV: development
+    ports: ["${WEB_HOST_PORT:-3000}:3000"]
+    depends_on:
+      api: {condition: service_started}
+    volumes:
+      - ./frontend:/app:rw
+      - /app/node_modules
+      - /app/.next
+    command: ["npm", "run", "dev"]
+
+  test:
+    build:
+      context: ./backend
+      target: runtime
+    environment:
+      <<: *backend-env
+      ENVIRONMENT: test
+      LOG_FORMAT: console
+      LLM_ENABLED: "false"
+      # Pinned, not inherited: the suite must not change behaviour because of
+      # what happens to be in a developer's gitignored .env.
+      CELERY_TASK_ALWAYS_EAGER: "false"
+      GOOGLE_CLIENT_ID: ""
+      GOOGLE_CLIENT_SECRET: ""
+      SYNC_DATABASE_URL: postgresql+psycopg://interview:interview@postgres:5432/interview
+      MIGRATION_DATABASE_URL: postgresql+psycopg://interview:interview@postgres:5432/interview
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    volumes:
+      - ./backend:/app:rw
+      # The env examples and compose file live at the repo root, and
+      # `test_env_examples.py` asserts a fresh clone can actually boot from
+      # them. Read-only: the suite inspects them, never edits them.
+      - .:/repo:ro
+    command: ["pytest", "-q"]
+    profiles: ["tools"]
+    restart: "no"
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:

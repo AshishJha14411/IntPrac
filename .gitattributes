@@ -1,0 +1,26 @@
+# Line endings, pinned.
+#
+# This repo is developed on Windows and runs on Linux, in containers and in CI.
+# Git's autocrlf converts on checkout, which is fine for source but fatal for
+# anything with a shebang: a `#!/usr/bin/env bash` line ending in CRLF makes
+# the kernel look for an interpreter called "bash\r", and the error
+# ("bad interpreter: No such file or directory") names a file that plainly
+# exists. Pinning the executable and container-read files to LF avoids that
+# entire afternoon.
+
+* text=auto
+
+*.sh            text eol=lf
+*.mjs           text eol=lf
+Dockerfile      text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+.env.example    text eol=lf
+*.example       text eol=lf
+
+# Binary-ish: never touch.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.docx binary
+*.tar.gz binary

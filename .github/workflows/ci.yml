@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: interview
+          POSTGRES_PASSWORD: interview
+          POSTGRES_DB: interview
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U interview" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+
+    env:
+      ENVIRONMENT: test
+      LLM_ENABLED: "false"
+      DATABASE_URL: postgresql+asyncpg://interview:interview@localhost:5432/interview
+      SYNC_DATABASE_URL: postgresql+psycopg://interview:interview@localhost:5432/interview
+      # Pinned explicitly. Never let this fall through to an inherited value.
+      MIGRATION_DATABASE_URL: postgresql+psycopg://interview:interview@localhost:5432/interview
+      REDIS_URL: redis://localhost:6379/0
+
+    defaults:
+      run: { working-directory: backend }
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Types
+        run: mypy app
+        continue-on-error: true # advisory until the annotations are complete
+
+      - name: Migrations apply cleanly from scratch
+        run: alembic upgrade head
+
+      - name: Question bank meets the authoring bar
+        run: python -m app.content.seed
+
+      - name: Tests
+        run: pytest -q --cov=app --cov-report=term-missing
+
+      # Called out separately so a failure here is unmistakable in the log:
+      # prose leaking into scoring is a release blocker, not a flaky test.
+      - name: Score-invariance gate (IR-3)
+        run: pytest -q -m invariance
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: frontend }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm run build
+
+  smoke:
+    # The suite cannot catch MissingGreenlet -- the test session is sync behind
+    # an async facade. Only a real run against the async engine can.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bring the stack up
+        run: |
+          cp .env.example .env
+          docker compose up -d --build postgres redis minio minio-init
+          docker compose run --rm migrate
+          docker compose run --rm seed
+          docker compose up -d api worker beat
+      - name: Wait for readiness
+        run: |
+          for _ in $(seq 1 60); do
+            curl -fsS http://localhost:8080/api/v1/health/ready && exit 0
+            sleep 2
+          done
+          docker compose logs api
+          exit 1
+      - name: Smoke
+        run: ./scripts/smoke.sh
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail 200
+
+  image-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t interview-backend:ci ./backend
+      - name: Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: interview-backend:ci
+          format: table
+          # Report-only. A CVE disclosed upstream should not redden an
+          # unrelated PR; flip to enforcing once the baseline is clean.
+          exit-code: "0"
+        continue-on-error: true

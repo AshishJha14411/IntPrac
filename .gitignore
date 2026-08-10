@@ -1,0 +1,37 @@
+# --- secrets ---
+.env
+.env.*
+!.env.example
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# --- node ---
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.pnpm-store/
+
+# --- editors / os ---
+.idea/
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+
+# --- local data ---
+.data/
+*.log
+
+# --- speech model (fetched by `npm run fetch:model`, ~40 MB) ---
+frontend/public/models/
