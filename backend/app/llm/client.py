@@ -306,6 +306,7 @@ class StubLLMClient:
 
 _grader: LLMClient | None = None
 _reducer: LLMClient | None = None
+_synthesiser: LLMClient | None = None
 
 
 def _build(model: str) -> LLMClient:
@@ -328,7 +329,23 @@ def get_reducer_client() -> LLMClient:
     return _reducer
 
 
+def get_synthesis_client() -> LLMClient:
+    """Its own client, not the grader's, though today both name the same model.
+
+    Separate because they are separate decisions. The grader runs on
+    `flash-lite` at `minimal` because grading is closed-book and measurement
+    showed thinking bought nothing. Synthesis is open-ended authoring, so if
+    generated rubrics read thin the model or effort will move -- and it must be
+    able to move without dragging the grader, whose settings came out of a
+    benchmark and should not change by accident.
+    """
+    global _synthesiser
+    if _synthesiser is None:
+        _synthesiser = _build(settings.llm_synthesis_model)
+    return _synthesiser
+
+
 def reset_clients() -> None:
     """Test hook."""
-    global _grader, _reducer
-    _grader = _reducer = None
+    global _grader, _reducer, _synthesiser
+    _grader = _reducer = _synthesiser = None

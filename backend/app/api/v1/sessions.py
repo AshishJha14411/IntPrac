@@ -22,11 +22,12 @@ from app.api.deps import Answerer, DbSession, SessionStarter
 from app.authz.perms import Perm
 from app.authz.policy import authorize_owned
 from app.core import idempotency
+from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.core.pagination import apply_keyset, clamp_limit, finish_page
 from app.core.shutdown import drain_guard
-from app.domain.enums import DocumentStatus, InterviewMode, SessionStatus
+from app.domain.enums import DocumentStatus, InterviewMode, SessionPurpose, SessionStatus
 from app.domain.state_machine import assert_transition
 from app.models.documents import (
     JDProfile,
@@ -53,8 +54,8 @@ from app.schemas.interview import (
     TurnResponse,
 )
 from app.services import interview as interview_service
-from app.services import planning
-from app.services.reduction import reduce_to_selectors
+from app.services import plan_synthesis, planning
+from app.services.reduction import Selectors, reduce_to_selectors
 from app.services.spend import assert_within_cap
 
 router = APIRouter(prefix="/sessions", tags=["interview"])
@@ -245,23 +246,58 @@ async def create_session(
     db.add(interview)
     await db.flush()
 
-    # ═══ TRUST BOUNDARY ═══ prose in, enums out. Nothing below this line
-    # receives `resume_text` or `jd_text`.
-    selectors = await reduce_to_selectors(
-        db,
-        mode=payload.mode,
-        seniority=payload.seniority,
-        resume_text=resume_text,
-        jd_text=jd_text,
-        domain=payload.domain,
-        user_id=principal.user_id,
-    )
+    # ═══ TRUST BOUNDARY ═══ prose in, validated structures out. Nothing below
+    # these two calls receives `resume_text` or `jd_text`.
+    #
+    # Two ways across, and both end on this side of the line:
+    #
+    #   synthesis  writes the whole interview from the documents, and returns
+    #              rubrics that passed `validate_question` plus question text
+    #              that passed `sanitise_question`.
+    #   reduction  maps the documents onto the authored taxonomy and returns
+    #              enums.
+    #
+    # Synthesis is tried first and reduction only runs if it produced nothing,
+    # so the ordinary path is **one** model call for the whole plan rather than
+    # reduction plus one generation call per missing competency.
+    synthesised = None
+    if settings.llm_enabled and payload.purpose is SessionPurpose.PRACTICE:
+        synthesised = await plan_synthesis.synthesise_plan(
+            db,
+            resume_text=resume_text,
+            jd_text=jd_text,
+            seniority=payload.seniority,
+            question_count=planning.target_question_count(payload.target_minutes),
+        )
+
+    if synthesised is not None:
+        # `build_plan` still wants a `Selectors` for the seniority; the topic
+        # list came from synthesis, so nothing else on it is consulted.
+        selectors = Selectors(
+            competency_ids=tuple(q.question.competency_id for q in synthesised.questions),
+            seniority=payload.seniority,
+            domain=payload.domain,
+            source=payload.mode,
+            model_version="synthesis",
+        )
+    else:
+        selectors = await reduce_to_selectors(
+            db,
+            mode=payload.mode,
+            seniority=payload.seniority,
+            resume_text=resume_text,
+            jd_text=jd_text,
+            domain=payload.domain,
+            user_id=principal.user_id,
+        )
+
     questions = await planning.build_plan(
         db,
         interview=interview,
         selectors=selectors,
         profile_items=profile_items,
         jd_requirements=jd_requirements,
+        synthesised=synthesised,
     )
 
     interview.status = assert_transition(interview.status, SessionStatus.PLANNED).value

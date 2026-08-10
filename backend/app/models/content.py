@@ -30,6 +30,14 @@ class Competency(Base, Timestamps):
     label: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text())
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: ``authored`` (seeded from ``content/taxonomy.py``) or ``inferred``
+    #: (registered by plan synthesis when a candidate's documents named a topic
+    #: nobody had authored).
+    #:
+    #: The taxonomy stopped being closed when synthesis arrived, and this column
+    #: is how you can still tell what was curated from what a document produced
+    #: -- which is the first question to ask of a rubric that reads oddly.
+    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="authored")
 
     bank_questions: Mapped[list[BankQuestion]] = relationship(back_populates="competency")
 
@@ -77,6 +85,19 @@ class BankQuestion(Base, UUIDPrimaryKey, Timestamps):
     #: reviewing and replacing with authored content.
     generated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: ``[{"prompt": ..., "targets_concept_id": ...}]`` -- what a real
+    #: interviewer asks when an answer is thin, written with the question.
+    #:
+    #: Cached on the bank question rather than the session, because a follow-up
+    #: that probes without naming the concept is the same for every candidate on
+    #: that topic; only the opening question is personalised.
+    #:
+    #: Empty for the authored banks, which fall back to the concept's signpost.
+    #: That fallback is *hint* content, so it discloses help and discounts the
+    #: candidate's credit (FR-E4f) -- a real follow-up here does not have to.
+    followups: Mapped[list[dict[str, str]]] = mapped_column(
+        JSONType, nullable=False, default=list
+    )
 
     competency: Mapped[Competency] = relationship(back_populates="bank_questions")
     concepts: Mapped[list[BankRubricConcept]] = relationship(

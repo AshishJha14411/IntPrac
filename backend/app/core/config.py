@@ -138,6 +138,25 @@ class Settings(BaseSettings):
     #: `models.list()`*. Listing a model is not permission to call it; verify a
     #: model by calling it.
     llm_reduction_model: str = "gemini-3.5-flash-lite"
+    #: Plan synthesis: one call that writes a whole interview from the
+    #: candidate's documents. Same model as the grader, by instruction, to hold
+    #: the cost line.
+    llm_synthesis_model: str = "gemini-3.5-flash-lite"
+    #: ⚠ `minimal` here is a **cost choice, not a measured one**, and the
+    #: argument that justified it for grading does not transfer.
+    #:
+    #: `grading.py` explains why the grader needs no thinking: grading is
+    #: closed-book. The rubric names the concepts, the signals say what counts,
+    #: and a schema fixes the shape, so extra reasoning re-derives what the
+    #: prompt already contains. Synthesis is the opposite -- open-ended
+    #: authoring that has to supply the domain knowledge itself. Note that
+    #: `question_gen.generate_for`, which does the same job for one topic, uses
+    #: `high`.
+    #:
+    #: So this is the knob to turn first if generated rubrics read thin, and
+    #: `scripts/synthesis_bench.py` exists to decide it with numbers rather than
+    #: taste. Raising it costs more per plan but the plan is cached forever.
+    llm_synthesis_effort: str = "minimal"
     llm_timeout_seconds: float = 90.0
     llm_max_retries: int = 2
     #: NFR-C5, **off by default**. A cap that refuses to start a session is a
@@ -182,7 +201,12 @@ class Settings(BaseSettings):
         field default, so there is exactly one default and it lives here.
         """
         if isinstance(data, dict):
-            for key in ("llm_grader_model", "llm_reduction_model"):
+            for key in (
+                "llm_grader_model",
+                "llm_reduction_model",
+                "llm_synthesis_model",
+                "llm_synthesis_effort",
+            ):
                 for candidate in (key, key.upper()):
                     value = data.get(candidate)
                     if isinstance(value, str) and not value.strip():
