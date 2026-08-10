@@ -1,0 +1,140 @@
+name: Deploy
+
+# Only after CI has gone green on main, and only ever from main. A deploy that
+# can run on a red build is a deploy that will eventually ship a red build.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Manual re-run, for a rollback or a config-only change.
+  workflow_dispatch:
+
+concurrency:
+  # Never two deploys at once: the second would race the first's migration.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # for Google's keyless auth -- see below
+
+jobs:
+  backend:
+    # `workflow_run` fires on failure too, so the result has to be checked.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment: production # gate approvals/secrets here, in the repo settings
+    steps:
+      - uses: actions/checkout@v4
+
+      # Keyless. Workload Identity Federation trades a short-lived GitHub OIDC
+      # token for a Google one, so there is no long-lived service-account JSON
+      # in repo secrets to leak or rotate. It is more console setup once and
+      # less to worry about forever.
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push
+        run: |
+          gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/interview/api:${{ github.sha }}"
+          docker build -t "$IMAGE" ./backend
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # Migrations run as a one-off Job *before* the new revision serves
+      # traffic. The other order deploys code that expects a column the
+      # database does not have yet, and the failure lands on users rather than
+      # here. Note it uses the DIRECT Neon endpoint: DDL through a transaction
+      # pooler is how you get a half-applied migration.
+      - name: Migrate
+        run: |
+          gcloud run jobs deploy interview-migrate \
+            --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
+            --command alembic --args "upgrade,head" \
+            --set-secrets "MIGRATION_DATABASE_URL=interview-migration-db-url:latest" \
+            --max-retries 0 --quiet
+          gcloud run jobs execute interview-migrate \
+            --region "${{ secrets.GCP_REGION }}" --wait --quiet
+
+      # Seeding is idempotent (it validates the authoring bar, then upserts),
+      # so it runs every deploy rather than being a thing someone remembers.
+      - name: Seed the question bank
+        run: |
+          gcloud run jobs deploy interview-seed \
+            --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
+            --command python --args "-m,app.content.seed" \
+            --set-secrets "SYNC_DATABASE_URL=interview-sync-db-url:latest" \
+            --max-retries 0 --quiet
+          gcloud run jobs execute interview-seed \
+            --region "${{ secrets.GCP_REGION }}" --wait --quiet
+
+      - name: Deploy the API
+        run: |
+          gcloud run deploy interview-api \
+            --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
+            --platform managed --allow-unauthenticated \
+            --port 8080 --cpu 1 --memory 1Gi \
+            --min-instances 0 --max-instances 3 \
+            --set-env-vars "ENVIRONMENT=production,LOG_FORMAT=json,CELERY_TASK_ALWAYS_EAGER=true,AUTH_COOKIE_SECURE=true,CORS_ORIGINS=${{ secrets.FRONTEND_ORIGIN }},FRONTEND_BASE_URL=${{ secrets.FRONTEND_ORIGIN }},GOOGLE_REDIRECT_URI=${{ secrets.API_ORIGIN }}/api/v1/auth/google/callback" \
+            --set-secrets "DATABASE_URL=interview-db-url:latest,SYNC_DATABASE_URL=interview-sync-db-url:latest,MIGRATION_DATABASE_URL=interview-migration-db-url:latest,REDIS_URL=interview-redis-url:latest,JWT_SECRET=interview-jwt-secret:latest,GEMINI_API_KEY=interview-gemini-key:latest,GOOGLE_CLIENT_ID=interview-google-client-id:latest,GOOGLE_CLIENT_SECRET=interview-google-client-secret:latest,S3_ACCESS_KEY_ID=interview-s3-key-id:latest,S3_SECRET_ACCESS_KEY=interview-s3-secret:latest" \
+            --quiet
+          # `min-instances 0` is the whole cost model (ADR 010): nothing is
+          # billed while idle, which only works because there is no worker.
+
+      # Deploying and *working* are different claims. This asserts the running
+      # revision is the one we built and is in the dispatch mode we intend --
+      # the exact thing that was wrong in v1 for weeks with nobody noticing.
+      - name: Verify the revision that is actually serving
+        run: |
+          READY=$(curl -fsS "${{ secrets.API_ORIGIN }}/api/v1/health/ready")
+          echo "$READY"
+          echo "$READY" | grep -q '"dispatch":"inline"' \
+            || { echo "::error::deployed revision is not in workerless mode"; exit 1; }
+          echo "$READY" | grep -q '"database":"ok"' \
+            || { echo "::error::deployed revision cannot reach the database"; exit 1; }
+
+      - name: Roll back on a failed verification
+        if: failure()
+        run: |
+          echo "::warning::routing traffic back to the previous revision"
+          PREV=$(gcloud run revisions list --service interview-api \
+            --region "${{ secrets.GCP_REGION }}" --format="value(name)" \
+            --sort-by="~metadata.creationTimestamp" | sed -n 2p)
+          [ -n "$PREV" ] && gcloud run services update-traffic interview-api \
+            --region "${{ secrets.GCP_REGION }}" --to-revisions "$PREV=100" --quiet
+
+  frontend:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    needs: backend # the UI must never be newer than the API it calls
+    runs-on: ubuntu-latest
+    environment: production
+    defaults:
+      run: { working-directory: frontend }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci --no-audit --no-fund
+      - run: npm i -g vercel@latest
+      - name: Deploy
+        env:
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+          # `npm run build` fetches the 40 MB Vosk model into public/models so
+          # the on-device recogniser is served from our own origin rather than
+          # a third-party CDN that could be down mid-interview (ADR 011).
+          vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}"
