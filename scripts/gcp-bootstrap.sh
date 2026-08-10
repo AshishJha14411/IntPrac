@@ -23,10 +23,29 @@ ok()  { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 
 command -v gcloud >/dev/null || die "gcloud not found: https://cloud.google.com/sdk/docs/install"
 
+# Phases. The infrastructure half needs three non-secret values; the Secret
+# Manager half needs ten live credentials from four different providers. They
+# are split because you can usefully do the first before you have the second,
+# and being blocked on a Vercel token is no reason to have done none of it.
+#
+#   ./scripts/gcp-bootstrap.sh infra     APIs, registry, service account, WIF
+#   ./scripts/gcp-bootstrap.sh secrets   Secret Manager only
+#   ./scripts/gcp-bootstrap.sh           both (default)
+PHASE="${1:-all}"
+case "$PHASE" in
+  infra | secrets | all) ;;
+  *) die "unknown phase '$PHASE' (want: infra, secrets, all)" ;;
+esac
+
 ENV_FILE="${ENV_FILE:-.env.production}"
-[ -f "$ENV_FILE" ] || die "$ENV_FILE not found. Copy .env.production.example and fill it in."
-# shellcheck disable=SC1090
-set -a; . "./$ENV_FILE"; set +a
+if [ -f "$ENV_FILE" ]; then
+  # shellcheck disable=SC1090
+  set -a; . "./$ENV_FILE"; set +a
+elif [ "$PHASE" = "infra" ] && [ -n "${GCP_PROJECT:-}" ]; then
+  say "no $ENV_FILE; using the environment (infra needs no credentials)"
+else
+  die "$ENV_FILE not found. Copy .env.production.example and fill it in."
+fi
 
 : "${GCP_PROJECT:?set GCP_PROJECT in $ENV_FILE (the project ID, not its display name or number)}"
 : "${GCP_REGION:?set GCP_REGION in $ENV_FILE, e.g. asia-south1}"
@@ -38,8 +57,33 @@ POOL="github"
 PROVIDER="intprac"
 
 gcloud config set project "$GCP_PROJECT" --quiet >/dev/null
-PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT" --format='value(projectNumber)')
+PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT" --format='value(projectNumber)' 2>/dev/null) \
+  || die "cannot read project '$GCP_PROJECT'. Check the ID (not the display
+  name, not the number) and that $(gcloud config get account) can see it."
 ok "project $GCP_PROJECT (number $PROJECT_NUMBER)"
+
+# Checked here, first, because every single command below fails without it and
+# the errors do not say so. `gcloud services enable run.googleapis.com` on an
+# unbilled project reports a generic FAILED_PRECONDITION, which sends you
+# looking at IAM. One explicit check up front is worth the round trip.
+BILLING=$(gcloud beta billing projects describe "$GCP_PROJECT" \
+            --format='value(billingEnabled)' 2>/dev/null || echo "unknown")
+if [ "$BILLING" != "True" ]; then
+  die "billing is not linked to $GCP_PROJECT.
+
+  Link one: https://console.cloud.google.com/billing/linkedaccount?project=$GCP_PROJECT
+
+  A card is required, but this stack is built to sit inside the always-free
+  tier: Cloud Run bills only while serving a request (--min-instances 0), and
+  the scheduled jobs run for seconds a day. Set a budget alert while you are
+  in there -- Billing -> Budgets & alerts -> Create budget -- so a surprise
+  is an email rather than a statement."
+fi
+ok "billing linked"
+
+if [ "$PHASE" = "secrets" ]; then
+  say "phase 'secrets': skipping APIs, registry, service account and WIF"
+else
 
 # ---------------------------------------------------------------------------
 say "APIs"
@@ -109,7 +153,12 @@ gcloud iam service-accounts add-iam-policy-binding "$SA" \
   --quiet >/dev/null
 ok "only ${GITHUB_REPO} can assume $SA_NAME"
 
+fi # end infra phase
+
 # ---------------------------------------------------------------------------
+if [ "$PHASE" = "infra" ]; then
+  say "phase 'infra': skipping Secret Manager"
+else
 say "Secret Manager"
 put() {
   local name="$1" value="${2:-}"
@@ -139,6 +188,8 @@ put interview-google-client-id   "${GOOGLE_CLIENT_ID:-}"
 put interview-google-client-secret "${GOOGLE_CLIENT_SECRET:-}"
 put interview-s3-key-id          "${S3_ACCESS_KEY_ID:-}"
 put interview-s3-secret          "${S3_SECRET_ACCESS_KEY:-}"
+
+fi # end secrets phase
 
 # ---------------------------------------------------------------------------
 cat <<EOF
