@@ -41,11 +41,23 @@ req() {
   esac
   printf '  \033[31m✗\033[0m %s %s -> HTTP %s\n      %s\n' \
     "$method" "${url#"$API"}" "$status" "$(printf '%s' "$body" | head -c 400)" >&2
+  # ::error:: becomes a GitHub *annotation*, which unlike the step log is
+  # readable through the REST API without an actions:read token. An
+  # intermittent failure you can only diagnose by asking someone to open a
+  # browser is one you diagnose once a day at best.
+  if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    printf '::error title=smoke %s %s::HTTP %s %s\n' \
+      "$method" "${url#"$API"}" "$status" \
+      "$(printf '%s' "$body" | tr '\n' ' ' | head -c 300)"
+  fi
   return 1
 }
 
+# GET wrapper, for the polling loops.
+get() { req GET "$@"; }
+
 echo "==> health"
-READY=$(curl -fsS "$API/health/ready") && ok "api ready" || bad "api not ready"
+READY=$(get "$API/health/ready") && ok "api ready" || bad "api not ready"
 # ADR 010: which dispatch mode this run exercised. Both paths must pass this
 # script -- in "inline" there is no worker or beat, and the requests below are
 # what drain the outbox.
@@ -57,7 +69,7 @@ esac
 
 echo "==> register"
 EMAIL="smoke-$$-$RANDOM@example.com"
-REG=$(curl -fsS -X POST "$API/auth/register" -H 'Content-Type: application/json' \
+REG=$(req POST "$API/auth/register" -H 'Content-Type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"password\":\"a-long-enough-password-1\",\"display_name\":\"Smoke\"}")
 TOKEN=$(printf '%s' "$REG" | jsonf access_token)
 A="Authorization: Bearer $TOKEN"
@@ -68,7 +80,7 @@ echo "==> the account surface, over cookies (what a browser actually does)"
 # cookie path the web app runs on -- or the pages that hang off it. A dashboard
 # calling the wrong URL 404s in silence, which is exactly how it shipped.
 JAR=$(mktemp)
-curl -fsS -c "$JAR" -o /dev/null -X POST "$API/auth/register" -H 'Content-Type: application/json' \
+req POST "$API/auth/register" -c "$JAR" -o /dev/null -H 'Content-Type: application/json' \
   -d "{\"email\":\"cookie-$$-$RANDOM@example.com\",\"password\":\"a-long-enough-password-1\",\"display_name\":\"Cookie\"}"
 grep -q interview_access "$JAR" && ok "register signs you in (cookies set)" || bad "register set no cookies"
 ME=$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' "$API/auth/me")
@@ -77,13 +89,13 @@ for path in /sessions /me/progress; do
   CODE=$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' "$API$path")
   [ "$CODE" = 200 ] && ok "dashboard reads $path" || bad "$path returned $CODE"
 done
-curl -fsS -b "$JAR" -c "$JAR" -o /dev/null -X POST "$API/auth/logout"
+req POST "$API/auth/logout" -b "$JAR" -c "$JAR" -o /dev/null
 AFTER=$(curl -s -b "$JAR" -o /dev/null -w '%{http_code}' "$API/auth/me")
 [ "$AFTER" = 401 ] && ok "logout actually revokes the session" || bad "still authenticated after logout ($AFTER)"
 rm -f "$JAR"
 
 echo "==> job description (async parse via outbox -> celery)"
-JD=$(curl -fsS -X POST "$API/jds" -H "$A" -H 'Content-Type: application/json' -d '{
+JD=$(req POST "$API/jds" -H "$A" -H 'Content-Type: application/json' -d '{
   "title": "Senior Backend Engineer",
   "text": "Senior Backend Engineer\n- indexing strategy and query planning in Postgres\n- transactions and acid guarantees\n- rest api design and error contract design\n- idempotency keys and rate limiting\n- connection pooling and schema migration safety\n- authorization models and cache invalidation and stampede\n- async concurrency model"
 }' | jsonf id)
@@ -97,7 +109,7 @@ done
 [ "$JD_STATUS" = ready ] && ok "worker parsed the JD" || bad "JD never became ready"
 
 echo "==> plan (the trust boundary runs here)"
-PLAN=$(curl -fsS -X POST "$API/sessions" -H "$A" -H 'Content-Type: application/json' \
+PLAN=$(req POST "$API/sessions" -H "$A" -H 'Content-Type: application/json' \
   -d "{\"mode\":\"jd\",\"seniority\":\"senior\",\"target_minutes\":30,\"jd_version_id\":\"$JD\"}")
 SID=$(printf '%s' "$PLAN" | sed -n 's/.*"session":{"id":"\([^"]*\)".*/\1/p')
 NQ=$(printf '%s' "$PLAN" | grep -o '"competency_id"' | wc -l | tr -d ' ')
@@ -106,7 +118,7 @@ NQ=$(printf '%s' "$PLAN" | grep -o '"competency_id"' | wc -l | tr -d ' ')
 echo "==> consent gate"
 BLOCKED=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$API/sessions/$SID/start" -H "$A")
 [ "$BLOCKED" = 409 ] && ok "start refused before consent ($BLOCKED)" || bad "started without consent ($BLOCKED)"
-curl -fsS -o /dev/null -X POST "$API/sessions/$SID/consent" -H "$A" -H 'Content-Type: application/json' \
+req POST "$API/sessions/$SID/consent" -o /dev/null -H "$A" -H 'Content-Type: application/json' \
   -d '{"accepts_ai_assessment":true,"accepts_recording":true,"accepts_retention":true}'
 ok "consent recorded"
 
@@ -131,14 +143,14 @@ done
 ok "answered $N questions, session completed"
 
 echo "==> idempotent replay"
-REPLAY=$(curl -fsS -X POST "$API/sessions/$SID/answers" -H "$A" -H 'Content-Type: application/json' \
+REPLAY=$(req POST "$API/sessions/$SID/answers" -H "$A" -H 'Content-Type: application/json' \
   -d "{\"question_id\":\"$QID\",\"transcript\":\"$ANSWER\",\"idempotency_key\":\"smoke-$SID-1\"}" || true)
 case "$REPLAY" in *'"replayed":true'*) ok "retried submit was recognised as a replay";;
   *) bad "replay not detected: $(printf '%s' "$REPLAY" | head -c 120)";; esac
 
 echo "==> grading (async, off the critical path)"
 for _ in $(seq 1 60); do
-  REP=$(curl -fsS -H "$A" "$API/sessions/$SID/report")
+  REP=$(get "$API/sessions/$SID/report" -H "$A")
   case "$REP" in *'"pending_questions": 0'*|*'"pending_questions":0'*) break;; esac
   sleep 1
 done
