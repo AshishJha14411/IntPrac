@@ -1,8 +1,12 @@
 name: CI
 
 on:
-  push: { branches: [main] }
-  pull_request:
+  # `dev` is where work lands; `main` is what deploys. Both get the full suite
+  # on push so a broken dev is visible immediately rather than at PR time.
+  push: { branches: [main, dev] }
+  # Every PR into either, which is the gate that actually protects main --
+  # branch protection can require these checks before a merge is allowed.
+  pull_request: { branches: [main, dev] }
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
