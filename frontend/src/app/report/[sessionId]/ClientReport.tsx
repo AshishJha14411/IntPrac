@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
 import type { SessionReport } from "@/lib/types";
+import { ReportBody } from "./ReportBody";
 
 /**
  * The report, fetched from the browser instead of the server.
@@ -19,18 +20,20 @@ import type { SessionReport } from "@/lib/types";
  * The browser *does* hold that cookie and will send it to the API directly
  * (credentialed CORS), so the fallback is simply to ask from here.
  *
+ * ⚠ This takes `sessionId` and nothing else, and renders `ReportBody` by
+ * importing it. It used to accept the body as a render prop — a function —
+ * which a Server Component cannot pass to a Client Component: React has to
+ * serialise the props and a closure has no serialisation, so it substituted
+ * an Error. The fallback for the 401 became the cause of a "Something went
+ * wrong" page, in production only, because same-origin dev forwards the
+ * cookie and never reaches this branch.
+ *
  * Deliberately a fallback and not the default: server rendering is the right
  * choice for a read page with no interactive state, and same-domain
  * deployments — the recommended shape — keep it. This only runs when the
  * server render came back unauthenticated.
  */
-export function ClientReport({
-  sessionId,
-  children,
-}: {
-  sessionId: string;
-  children: (report: SessionReport) => React.ReactNode;
-}) {
+export function ClientReport({ sessionId }: { sessionId: string }) {
   const report = useQuery({
     queryKey: ["report", sessionId],
     queryFn: () => api<SessionReport>(`/sessions/${sessionId}/report`),
@@ -63,5 +66,5 @@ export function ClientReport({
     );
   }
 
-  return <>{children(report.data)}</>;
+  return <ReportBody report={report.data} />;
 }

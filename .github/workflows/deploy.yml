@@ -247,6 +247,44 @@ jobs:
           echo "$READY" | grep -q '"database":"ok"' \
             || { echo "::error::deployed revision cannot reach the database"; exit 1; }
 
+          # The report page, unauthenticated, on purpose.
+          #
+          # Split-domain means the auth cookie belongs to the API host and never
+          # reaches the Vercel server, so /report/{id} always renders its
+          # client-side fallback. That fallback shipped broken: the Server
+          # Component handed the Client Component a render *function*, which
+          # React cannot serialise across the boundary, so it substituted an
+          # Error and every user got "Something went wrong" with a digest.
+          #
+          # Neither `tsc` nor `next build` can see it -- the prop is valid React
+          # and the failure is a runtime serialisation error that only occurs in
+          # the deployed configuration. Local dev is same-origin, forwards the
+          # cookie, and never takes the branch at all.
+          #
+          # Any UUID works, because unauthenticated is the whole point: we are
+          # asserting the fallback *renders*, not what it renders. An `E{"digest"`
+          # marker in the RSC payload means a component threw.
+          # Status *and* body. The first version of this check used
+          # `curl -fsS ... || true`, so a 500 produced an empty body, the grep
+          # found nothing, and it passed -- on the exact broken deployment it
+          # was written to catch. A render failure surfaces either as a 5xx or
+          # as a 200 whose streamed RSC payload carries the error, depending on
+          # how far Next got before throwing, so both have to be checked.
+          PAGE=$(curl -sS --max-time 30 -w $'\n%{http_code}' \
+            "$FRONTEND_ORIGIN/report/00000000-0000-0000-0000-000000000000" || echo $'\n000')
+          CODE=${PAGE##*$'\n'}
+          BODY=${PAGE%$'\n'*}
+          if [ "$CODE" -ge 500 ] 2>/dev/null || [ "$CODE" = 000 ]; then
+            echo "::error::the report page returned HTTP $CODE"
+            exit 1
+          fi
+          if printf '%s' "$BODY" | grep -q 'E{\\"digest'; then
+            echo "::error::the report page threw during render (RSC error in the payload)"
+            printf '%s' "$BODY" | grep -o 'digest[^,}]\{0,60\}' | head -3
+            exit 1
+          fi
+          echo "report page renders without a server error (HTTP $CODE)"
+
       - name: Roll back on a failed verification
         if: failure()
         run: |
