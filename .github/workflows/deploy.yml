@@ -79,13 +79,49 @@ jobs:
 
       - name: Deploy the API
         run: |
+          # Storage, shared with the scheduled jobs below -- retention deletes
+          # objects, so it needs the same endpoint the API signs uploads
+          # against. Both defaulted to http://localhost:9000, the MinIO the dev
+          # stack runs, and nothing here overrode them: the API would have
+          # started cleanly and signed upload URLs pointing at the user's own
+          # laptop. GCS speaks the S3 XML API at one global host, so unlike
+          # MinIO there is no separate in-cluster address to distinguish.
+          COMMON_STORAGE="S3_ENDPOINT_URL=https://storage.googleapis.com"
+          COMMON_STORAGE="$COMMON_STORAGE;S3_PUBLIC_ENDPOINT_URL=https://storage.googleapis.com"
+          COMMON_STORAGE="$COMMON_STORAGE;S3_BUCKET_UPLOADS=${{ secrets.GCS_BUCKET }}"
+          COMMON_STORAGE="$COMMON_STORAGE;S3_REGION=${{ secrets.GCP_REGION }}"
+          echo "COMMON_STORAGE=$COMMON_STORAGE" >> "$GITHUB_ENV"
+
+          # `^;^` switches gcloud's list delimiter from comma to semicolon,
+          # because CORS_ORIGINS is itself comma-separated: with the default
+          # delimiter a second origin parses as a new variable named after a
+          # URL and gcloud rejects the deploy.
+          #
+          # AUTH_COOKIE_SAMESITE=none is load-bearing and was missing. The UI
+          # is on Vercel and the API on Cloud Run -- different sites, so a
+          # `lax` cookie is not sent with the request at all and every call
+          # arrives anonymous. It pairs with Secure=true, since browsers drop
+          # a `none` cookie that is not Secure, so setting either one alone
+          # locks everybody out just as completely.
+          # tests/unit/test_env_examples.py has asserted that pair for the
+          # example file all along. Nothing asserted it for the thing that
+          # actually deploys, which is where it was wrong.
+          #
+          # CELERY_BROKER_URL and CELERY_RESULT_BACKEND get the same Redis as
+          # the app. Eager mode never dials either, so this changes nothing
+          # today -- but they defaulted to localhost:6379, so turning
+          # CELERY_TASK_ALWAYS_EAGER off in the console would not have moved
+          # this to broker mode, it would have hung against a Redis that is
+          # not there. Upstash serves one logical database rather than the
+          # sixteen a local Redis has, so compose's db-number split collapses
+          # here; harmless while nothing publishes.
           gcloud run deploy interview-api \
             --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
             --platform managed --allow-unauthenticated \
             --port 8080 --cpu 1 --memory 1Gi \
             --min-instances 0 --max-instances 3 \
-            --set-env-vars "ENVIRONMENT=production,LOG_FORMAT=json,CELERY_TASK_ALWAYS_EAGER=true,AUTH_COOKIE_SECURE=true,CORS_ORIGINS=${{ secrets.FRONTEND_ORIGIN }},FRONTEND_BASE_URL=${{ secrets.FRONTEND_ORIGIN }},GOOGLE_REDIRECT_URI=${{ secrets.API_ORIGIN }}/api/v1/auth/google/callback" \
-            --set-secrets "DATABASE_URL=interview-db-url:latest,SYNC_DATABASE_URL=interview-sync-db-url:latest,MIGRATION_DATABASE_URL=interview-migration-db-url:latest,REDIS_URL=interview-redis-url:latest,JWT_SECRET=interview-jwt-secret:latest,GEMINI_API_KEY=interview-gemini-key:latest,GOOGLE_CLIENT_ID=interview-google-client-id:latest,GOOGLE_CLIENT_SECRET=interview-google-client-secret:latest,S3_ACCESS_KEY_ID=interview-s3-key-id:latest,S3_SECRET_ACCESS_KEY=interview-s3-secret:latest" \
+            --set-env-vars "^;^ENVIRONMENT=production;LOG_FORMAT=json;CELERY_TASK_ALWAYS_EAGER=true;CORS_ORIGINS=${{ secrets.FRONTEND_ORIGIN }};FRONTEND_BASE_URL=${{ secrets.FRONTEND_ORIGIN }};GOOGLE_REDIRECT_URI=${{ secrets.API_ORIGIN }}/api/v1/auth/google/callback;AUTH_COOKIE_SECURE=true;AUTH_COOKIE_SAMESITE=none;$COMMON_STORAGE" \
+            --set-secrets "DATABASE_URL=interview-db-url:latest,SYNC_DATABASE_URL=interview-sync-db-url:latest,MIGRATION_DATABASE_URL=interview-migration-db-url:latest,REDIS_URL=interview-redis-url:latest,CELERY_BROKER_URL=interview-redis-url:latest,CELERY_RESULT_BACKEND=interview-redis-url:latest,JWT_SECRET=interview-jwt-secret:latest,GEMINI_API_KEY=interview-gemini-key:latest,GOOGLE_CLIENT_ID=interview-google-client-id:latest,GOOGLE_CLIENT_SECRET=interview-google-client-secret:latest,S3_ACCESS_KEY_ID=interview-s3-key-id:latest,S3_SECRET_ACCESS_KEY=interview-s3-secret:latest" \
             --quiet
           # `min-instances 0` is the whole cost model (ADR 010): nothing is
           # billed while idle, which only works because there is no worker.
@@ -108,7 +144,7 @@ jobs:
             gcloud run jobs deploy "interview-$job" \
               --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
               --command python --args "-m,app.entrypoints.jobs,$job" \
-              --set-env-vars "ENVIRONMENT=production,LOG_FORMAT=json,CELERY_TASK_ALWAYS_EAGER=true" \
+              --set-env-vars "^;^ENVIRONMENT=production;LOG_FORMAT=json;CELERY_TASK_ALWAYS_EAGER=true;CORS_ORIGINS=${{ secrets.FRONTEND_ORIGIN }};$COMMON_STORAGE" \
               --set-secrets "DATABASE_URL=interview-db-url:latest,SYNC_DATABASE_URL=interview-sync-db-url:latest,REDIS_URL=interview-redis-url:latest,GEMINI_API_KEY=interview-gemini-key:latest,S3_ACCESS_KEY_ID=interview-s3-key-id:latest,S3_SECRET_ACCESS_KEY=interview-s3-secret:latest" \
               --max-retries 1 --task-timeout 15m --quiet
           done

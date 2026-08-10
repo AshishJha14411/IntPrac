@@ -202,6 +202,7 @@ GCP is ready. Now set these nine in GitHub:
   GCP_REGION                        ${GCP_REGION}
   GCP_SERVICE_ACCOUNT               ${SA}
   GCP_WORKLOAD_IDENTITY_PROVIDER    ${POOL_ID}/providers/${PROVIDER}
+  GCS_BUCKET                        ${GCS_BUCKET:-<your-bucket-name>}
   API_ORIGIN                        (fill after the first deploy, see below)
   FRONTEND_ORIGIN                   ${FRONTEND_ORIGIN:-https://<your-vercel-app>.vercel.app}
   VERCEL_TOKEN                      from vercel.com/account/tokens

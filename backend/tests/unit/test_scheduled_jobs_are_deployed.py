@@ -25,6 +25,7 @@ the test itself to be wrong.
 
 from __future__ import annotations
 
+import itertools
 from pathlib import Path
 
 import pytest
@@ -154,6 +155,157 @@ def test_no_worker_or_beat_service_is_deployed() -> None:
             f"{forbidden!r} would run continuously; workerless mode (ADR 010) "
             "exists precisely to avoid that cost"
         )
+
+
+def _api_step() -> str:
+    return _step("Deploy the API")
+
+
+def test_every_run_block_is_valid_shell() -> None:
+    """`bash -n` over every step in both workflows.
+
+    A workflow is a YAML file full of shell that nothing type-checks, and the
+    failure mode is expensive: you find out after the runner has spun up, and
+    for the deploy workflow, after it has already built and pushed an image.
+
+    Catches genuine syntax errors only. It does **not** catch a comment
+    interrupting a line continuation -- see the test below, which does; that
+    joins into a valid command followed by a comment, and `bash -n` is right
+    to accept it. Both checks are here because they fail on different things.
+    """
+    import re
+    import subprocess
+    import tempfile
+
+    yaml = pytest.importorskip("yaml")
+    root = _repo_root() / ".github" / "workflows"
+    if not root.is_dir():
+        pytest.skip("no workflows in this checkout")
+    if subprocess.run(["bash", "-c", "true"], capture_output=True).returncode:  # noqa: S607
+        pytest.skip("no bash available")
+
+    problems: list[str] = []
+    for path in sorted(root.glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_name, job in (doc.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                script = step.get("run")
+                if not script:
+                    continue
+                # ${{ ... }} is GitHub's template syntax, not shell. Replace it
+                # with a plain word so bash parses the shape of the command.
+                cleaned = re.sub(r"\$\{\{[^}]*\}\}", "X", script)
+                with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as handle:
+                    handle.write(cleaned)
+                    tmp = handle.name
+                result = subprocess.run(  # noqa: S603
+                    ["bash", "-n", tmp],  # noqa: S607
+                    capture_output=True,
+                    text=True,
+                )
+                Path(tmp).unlink(missing_ok=True)
+                if result.returncode:
+                    label = step.get("name", "<unnamed>")
+                    problems.append(f"{path.name} / {job_name} / {label}: {result.stderr.strip()}")
+
+    assert not problems, "shell syntax errors in workflow steps:\n" + "\n".join(problems)
+
+
+def test_no_comment_interrupts_a_line_continuation() -> None:
+    """A `#` line after a line ending in `\\` silently truncates the command.
+
+    The continuation joins the two lines, so everything from the `#` to the
+    end of the logical line -- including every remaining argument -- becomes a
+    comment. `gcloud run deploy interview-api --image X` with its
+    --set-secrets and --quiet eaten still *runs*; it just deploys something
+    other than what the file appears to say.
+
+    This is not hypothetical. I did exactly this while adding the storage
+    variables, and it survived both YAML parsing and `bash -n`, which is why
+    it needs a check of its own rather than being folded into the one above.
+    """
+    yaml = pytest.importorskip("yaml")
+    root = _repo_root() / ".github" / "workflows"
+    if not root.is_dir():
+        pytest.skip("no workflows in this checkout")
+
+    problems: list[str] = []
+    for path in sorted(root.glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_name, job in (doc.get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                lines = (step.get("run") or "").splitlines()
+                for prev, nxt in itertools.pairwise(lines):
+                    if prev.rstrip().endswith("\\") and nxt.lstrip().startswith("#"):
+                        label = step.get("name", "<unnamed>")
+                        problems.append(
+                            f"{path.name} / {job_name} / {label}: "
+                            f"{nxt.strip()[:60]!r} follows a line continuation"
+                        )
+
+    assert not problems, (
+        "a comment after a `\\` swallows the rest of the command:\n" + "\n".join(problems)
+    )
+
+
+def test_no_setting_with_a_localhost_default_is_left_at_it() -> None:
+    """Any default pointing at a dev service must be overridden by the deploy.
+
+    `S3_ENDPOINT_URL` and `S3_PUBLIC_ENDPOINT_URL` both default to
+    ``http://localhost:9000`` -- the MinIO in docker-compose -- and the deploy
+    set neither. Nothing failed at boot: the API would have started happily
+    and signed upload URLs pointing at the user's own laptop, so the first
+    symptom would have been a resume upload that hung.
+
+    Derived from the settings model rather than a hand-kept list, so a new
+    setting with a localhost default is caught the day it is added.
+    """
+    from app.core.config import Settings
+
+    step = _api_step()
+    missed = [
+        name.upper()
+        for name, field in Settings.model_fields.items()
+        if isinstance(field.default, str) and "localhost" in field.default
+        and name.upper() not in step
+    ]
+    assert not missed, (
+        f"these default to a local dev service and the deploy never overrides "
+        f"them: {missed}"
+    )
+
+
+def test_the_session_cookie_survives_a_cross_site_request() -> None:
+    """The UI and the API are on different sites in production.
+
+    A `lax` cookie is simply not sent on a cross-site request, so every call
+    would arrive anonymous -- a total auth failure that no test touching only
+    the API can see, because curl has no same-site policy. `none` restores it,
+    and browsers drop a `none` cookie that is not also Secure, so the two are
+    one setting wearing two names.
+    """
+    step = _api_step()
+    assert "AUTH_COOKIE_SAMESITE=none" in step, (
+        "without SameSite=none the browser withholds the session cookie from "
+        "every cross-site API call and nobody can log in"
+    )
+    assert "AUTH_COOKIE_SECURE=true" in step, (
+        "a SameSite=none cookie is discarded unless it is also Secure"
+    )
+
+
+def test_the_scheduled_jobs_can_reach_object_storage() -> None:
+    """Retention deletes objects, so it needs the same storage config as the API.
+
+    Easy to miss because the job would run, report success, and delete the
+    database rows -- leaving the files it was supposed to purge sitting in the
+    bucket. A retention job that half works is worse than one that fails.
+    """
+    step = _step("Deploy the scheduled jobs")
+    assert "S3_ENDPOINT_URL" in step or "COMMON_STORAGE" in step, (
+        "the retention job has no storage endpoint and would silently fail to "
+        "delete the files it exists to delete"
+    )
 
 
 def test_the_api_service_can_scale_to_zero() -> None:
