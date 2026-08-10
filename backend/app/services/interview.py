@@ -595,6 +595,36 @@ FOLLOWUP_TEMPLATES: tuple[str, ...] = (
 )
 
 
+def _authored_followup(
+    question: SessionQuestion, target: RubricConcept | None
+) -> str | None:
+    """A written follow-up for the gap, if the plan came with one.
+
+    Prefers one aimed at the concept the answer missed; falls back to any
+    unused follow-up on the question. Returns ``None`` for authored bank
+    questions, which have none and take the signpost path instead.
+
+    Indexed by ``followup_count`` so the second follow-up is not the first one
+    again -- asking the same thing twice reads as the interviewer not listening.
+    """
+    available = [
+        item.get("prompt", "")
+        for item in (question.followups or [])
+        if isinstance(item, dict) and item.get("prompt")
+    ]
+    if not available:
+        return None
+    if target is not None:
+        aimed = [
+            item.get("prompt", "")
+            for item in question.followups
+            if isinstance(item, dict) and item.get("targets_concept_id") == target.concept_id
+        ]
+        if aimed:
+            return aimed[question.followup_count % len(aimed)]
+    return available[question.followup_count % len(available)]
+
+
 async def add_followup(
     db: AsyncSession, *, question: SessionQuestion, target: RubricConcept | None = None
 ) -> str:
@@ -622,7 +652,18 @@ async def add_followup(
     if question.followup_count >= settings.max_followups_per_question:
         raise ConflictError("This question has already used both follow-ups.")
 
-    if target is not None and target.signpost:
+    authored = _authored_followup(question, target)
+    if authored is not None:
+        # A real interviewer's follow-up: it probes the gap without naming the
+        # concept or its terminology, so it is **not** a hint and carries no
+        # discount. That is the whole reason it is worth writing one.
+        #
+        # The signpost branch below exists because the authored banks have no
+        # follow-ups, and pointing at a concept by describing it *is* help --
+        # FR-E4f forbids charging for that silently, so it is disclosed and
+        # discounted. Prefer this branch whenever a real follow-up exists.
+        prompt = authored
+    elif target is not None and target.signpost:
         prompt = (
             f"Before we move on, one nudge on the same question — {target.signpost} "
             "(Pointing you at this counts as a hint, so it is discounted in the "

@@ -48,6 +48,7 @@ from app.models.interview import (
     SessionQuestion,
 )
 from app.services import question_gen
+from app.services.plan_synthesis import SynthesisedPlan
 from app.services.reduction import Selectors
 from app.services.sanitize import sanitise_framing
 
@@ -107,7 +108,15 @@ class PlannedSlot:
     ordinal: int
     competency_id: str
     bank_question: BankQuestion
-    framing_text: str | None
+    #: The complete text the candidate hears, already sanitised, or ``None`` to
+    #: fall back to the bank's neutral wording.
+    #:
+    #: "Complete" is load-bearing. The bank path builds this by prepending a
+    #: template prefix to the neutral wording; the synthesis path receives a
+    #: whole question written from the candidate's documents. Resolving that
+    #: difference here rather than at the row keeps one rule downstream:
+    #: whatever is in this field is what gets said.
+    asked_text: str | None
     source_profile_item_id: uuid.UUID | None
 
 
@@ -324,11 +333,27 @@ async def build_plan(
     selectors: Selectors,
     profile_items: Sequence[ProfileItem] = (),
     jd_requirements: Sequence[JDRequirement] = (),
+    synthesised: SynthesisedPlan | None = None,
 ) -> list[SessionQuestion]:
     """Materialise the plan: reduction row, question slots, frozen rubrics, fit map.
 
     Everything is staged on the session; the unit-of-work seam commits.
+
+    ``synthesised`` is a plan already written and validated by
+    ``services/plan_synthesis``. It arrives as ``BankQuestion`` rows and
+    sanitised strings, never as prose -- the documents were read on the far side
+    of the trust boundary in ``api/v1/sessions.py`` and do not reach here.
     """
+    if synthesised is not None:
+        return await _build_from_synthesis(
+            db,
+            interview=interview,
+            synthesised=synthesised,
+            seniority=selectors.seniority,
+            profile_items=profile_items,
+            jd_requirements=jd_requirements,
+        )
+
     bank = await _load_bank(db, selectors.competency_ids, selectors.seniority)
     if not bank:
         raise ValidationError(
@@ -390,12 +415,16 @@ async def build_plan(
             if interview.mode in (InterviewMode.RESUME, InterviewMode.COMBINED)
             else None
         )
+        framing = _framing_for(item)
         slots.append(
             PlannedSlot(
                 ordinal=len(slots),
                 competency_id=competency_id,
                 bank_question=question,
-                framing_text=_framing_for(item),
+                # A space, not a bare concatenation -- sanitisation strips
+                # trailing whitespace, so joining without one runs the two
+                # sentences together.
+                asked_text=f"{framing} {question.neutral_wording}" if framing else None,
                 source_profile_item_id=item.id if item else None,
             )
         )
@@ -403,10 +432,7 @@ async def build_plan(
     questions: list[SessionQuestion] = []
     for slot in slots:
         bank_question = slot.bank_question
-        framing = slot.framing_text
-        # A space, not a bare concatenation -- sanitisation strips trailing
-        # whitespace, so joining without one runs the two sentences together.
-        prompt = f"{framing} {bank_question.neutral_wording}" if framing else None
+        prompt = slot.asked_text
         session_question = SessionQuestion(
             session_id=interview.id,
             ordinal=slot.ordinal,
@@ -452,6 +478,100 @@ async def build_plan(
         questions=len(questions),
         mode=interview.mode,
         seniority=selectors.seniority.value,
+    )
+    return questions
+
+
+async def _build_from_synthesis(
+    db: AsyncSession,
+    *,
+    interview: InterviewSession,
+    synthesised: SynthesisedPlan,
+    seniority: Seniority,
+    profile_items: Sequence[ProfileItem],
+    jd_requirements: Sequence[JDRequirement],
+) -> list[SessionQuestion]:
+    """Materialise a plan that a model wrote, rather than one the bank held.
+
+    Structurally identical to the bank path -- same rows, same frozen rubric,
+    same fit map -- because everything downstream of here must not be able to
+    tell the difference. The rubric was validated by the same
+    ``validate_question`` the authored banks pass, and the question text was
+    already sanitised, so what arrives here is the same kind of object either
+    way.
+    """
+    db.add(
+        ReductionResult(
+            session_id=interview.id,
+            competency_ids=[q.question.competency_id for q in synthesised.questions],
+            seniority=seniority.value,
+            # A free-form professional field, not a `Domain` member. The
+            # taxonomy stopped being closed here; the column is a string and
+            # always was.
+            domain=synthesised.domain,
+            source=interview.mode,
+            discarded_candidates=[],
+            model_version="synthesis",
+        )
+    )
+
+    # The model is asked for a count and does not always honour it -- a 10
+    # question plan came back with 11. Extra questions are not a bonus: the
+    # duration shown to the candidate is derived from the count, so an
+    # unrequested eleventh makes a 20-minute session overrun and the estimate a
+    # lie. They are still cached in the bank, so nothing generated is wasted.
+    wanted = target_question_count(interview.target_minutes)
+
+    questions: list[SessionQuestion] = []
+    for ordinal, planned in enumerate(synthesised.questions[:wanted]):
+        bank_question = planned.question
+        session_question = SessionQuestion(
+            session_id=interview.id,
+            ordinal=ordinal,
+            competency_id=bank_question.competency_id,
+            seniority=seniority.value,
+            bank_question_id=bank_question.id,
+            rubric_version=bank_question.rubric_version,
+            rubric_family=bank_question.rubric_family,
+            neutral_wording=bank_question.neutral_wording,
+            reframe_wording=bank_question.reframe_wording,
+            # Sanitised on the way out of synthesis. Null when it was rejected,
+            # which falls back to the neutral wording -- a worse-worded
+            # question, never a worse-scored one.
+            framing_text=planned.asked_prompt,
+            source_profile_item_id=None,
+            status=QuestionStatus.PENDING,
+            # Frozen, like the rubric below it.
+            followups=list(bank_question.followups or []),
+        )
+        session_question.concepts = [
+            RubricConcept(
+                concept_id=concept.concept_id,
+                ordinal=concept.ordinal,
+                label=concept.label,
+                weight=concept.weight,
+                why_it_matters=concept.why_it_matters,
+                signpost=concept.signpost,
+                acceptable_signals=list(concept.acceptable_signals),
+                common_misconceptions=list(concept.common_misconceptions),
+            )
+            for concept in bank_question.concepts
+        ]
+        db.add(session_question)
+        questions.append(session_question)
+
+    if interview.mode is InterviewMode.COMBINED and jd_requirements:
+        _build_fit_map(db, interview, jd_requirements, profile_items)
+
+    await db.flush()
+    logger.info(
+        "plan_built",
+        session_id=str(interview.id),
+        questions=len(questions),
+        mode=interview.mode,
+        seniority=seniority.value,
+        source="synthesis",
+        domain=synthesised.domain,
     )
     return questions
 

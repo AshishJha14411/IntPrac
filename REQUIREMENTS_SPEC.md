@@ -39,6 +39,34 @@ candidate" and must be modelled explicitly from day one.
 > **The resume and JD decide WHAT IS ASKED. Only the interview decides THE
 > RATING.**
 
+> ⚠ **Amended once plan synthesis shipped. Read this first.**
+>
+> The bank could only ask about topics somebody had authored, and only
+> backend-engineering, databases and part of system-design ever were — 32 of 129
+> competencies. So reduction could not name anything else, and a frontend
+> candidate, a Salesforce administrator or a clinical trial manager was
+> interviewed about Postgres indexing. Outside software nobody on this project
+> can author that content, or judge it if they did.
+>
+> `services/plan_synthesis` therefore writes the interview from the documents in
+> one model call. Two clauses below changed as a result, and the honest version
+> is here rather than in a commit message:
+>
+> * **IR-2 is relaxed, deliberately and narrowly.** A rubric may now be written
+>   from the candidate's documents. It must still clear `validate_question` —
+>   the same bar the hand-authored banks clear — and is rejected, not
+>   downgraded, if it does not.
+> * **IR-3 no longer holds across candidates.** Two people are no longer asked
+>   the same questions, so scores are a personal development signal and not a
+>   ranking. Invariance survives only in the narrow form the tests assert: the
+>   same rubric and the same answer produce the same verdict.
+>
+> **IR-1 is untouched and is now the load-bearing one.** The grader still
+> receives the rubric, the neutral wording and the transcript, and nothing else
+> — `build_grading_payload` has no parameter that could carry prose, and
+> `tests/unit/test_score_invariance.py` asserts it. A document decides what you
+> are asked about. It never talks to the thing that scores you.
+
 Resume and JD free text are used for exactly one purpose: to select the
 **domain, topics and seniority** of the interview. At that point they are
 reduced to a small, validated, closed-vocabulary set of selectors:
@@ -92,7 +120,7 @@ This has concrete design consequences:
 | Assumption | Consequence |
 |---|---|
 | Tens of users, not thousands | No sharding, no read replicas, no queue autoscaling. Single Postgres + one worker is correct. |
-| Domain is **CS / software engineering** | The competency taxonomy and question bank are deep on CS/dev topics (Appendix C) rather than broad and shallow. Breadth into other industries is explicitly a non-goal. |
+| ~~Domain is **CS / software engineering**~~ **Superseded.** | The authored taxonomy is still deep on CS/dev (Appendix C), but it is no longer the limit. Plan synthesis writes questions for whatever profession the documents describe, and caches them, so breadth costs authoring time rather than being refused. The original reasoning — that a curated bank turns per-interview spend into one-time authoring spend — still holds and is *why* this works: a synthesised rubric is written once at roughly $0.003 and reused forever, so a whole new profession costs about ten cents. |
 | Practice is the main flow | Candidate feedback quality is the #1 product priority; HR review is built for **showcase + occasional peer review**, not pipeline throughput. |
 | Costs come out of a personal wallet | **Cost per interview is a hard design constraint, not a metric** (§8.3). |
 | Peers practising, not adversaries | Anti-cheating/integrity signalling (§9.5) drops to "nice-to-have, last". Nobody is gaming a practice interview against themselves. |
@@ -138,7 +166,7 @@ of sessions, not a funnel.
 | Live coding / IDE / whiteboard | Separate product surface; may follow in P3. |
 | Multi-interviewer live panels | v1 is async: AI conducts, humans review later. |
 | ATS write-back integrations | Not applicable at this scale (§1.3). |
-| Non-CS/engineering domains (sales, finance, …) | Taxonomy depth beats breadth for this audience (§1.3). |
+| ~~Non-CS/engineering domains (sales, finance, …)~~ **Now in scope.** | Plan synthesis writes and caches questions for any profession the documents describe (§1.2). Verified against a clinical trial management JD and a marketing JD. What remains out of scope is *authoring* those domains by hand — nobody here could judge the result. |
 | Statistical adverse-impact / bias auditing | Needs population volume to be meaningful; a handful of friends can't produce a valid signal. The *fairness mechanisms* (IR-3, name-blind grading) still apply — the statistical reporting doesn't. |
 | Horizontal scale work (replicas, sharding, autoscaling) | Wrong problem at tens of users; would be architecture theatre. |
 

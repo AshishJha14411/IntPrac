@@ -26,7 +26,11 @@ type ResumeQuality = {
 };
 type ProfileResponse = { quality?: ResumeQuality };
 
-type Source = "jd" | "resume";
+/** Also the API's `mode`, so there is nothing to map and nothing to get wrong. */
+type Source = "jd" | "resume" | "combined";
+
+const NEEDS_JD: ReadonlySet<Source> = new Set<Source>(["jd", "combined"]);
+const NEEDS_RESUME: ReadonlySet<Source> = new Set<Source>(["resume", "combined"]);
 
 const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const ACCEPTED: Record<string, string> = { "application/pdf": ".pdf", [DOCX]: ".docx" };
@@ -67,44 +71,34 @@ export function NewSessionForm() {
     throw new Error("Parsing is taking longer than expected. Try again in a moment.");
   }
 
-  const start = useMutation({
-    mutationFn: async (): Promise<SessionPlan> => {
-      if (source === "jd") {
-        setStatus("Reading the job description…");
-        const jd = await api<JdResponse>("/jds", {
-          method: "POST",
-          body: { title: title || "Untitled role", text },
-        });
+  /** Submit the JD and wait for the worker to have a version to read. */
+  async function submitJd(): Promise<string> {
+    setStatus("Reading the job description…");
+    const jd = await api<JdResponse>("/jds", {
+      method: "POST",
+      body: { title: title || "Untitled role", text },
+    });
 
-        // Parsing is asynchronous by design (FR-R3/J2): the UI polls rather
-        // than blocking on a worker.
-        setStatus("Choosing topics…");
-        for (let attempt = 0; attempt < 30; attempt += 1) {
-          try {
-            await api(`/jds/versions/${jd.id}`);
-            break;
-          } catch (error) {
-            if ((error as ApiError).status !== 404) throw error;
-            await new Promise((resolve) => setTimeout(resolve, 500));
-          }
-        }
-
-        setStatus("Building your interview plan…");
-        return api<SessionPlan>("/sessions", {
-          method: "POST",
-          body: {
-            mode: "jd",
-            seniority,
-            purpose: "practice",
-            target_minutes: minutes,
-            jd_version_id: jd.id,
-          },
-        });
+    // Parsing is asynchronous by design (FR-R3/J2): the UI polls rather
+    // than blocking on a worker.
+    setStatus("Choosing topics…");
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      try {
+        await api(`/jds/versions/${jd.id}`);
+        break;
+      } catch (error) {
+        if ((error as ApiError).status !== 404) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
+    }
+    return jd.id;
+  }
 
-      if (!file) throw new Error("Choose a resume file first.");
+  /** Presign, upload straight to storage, wait for parsing. */
+  async function uploadResume(): Promise<string> {
+    if (!file) throw new Error("Choose a resume file first.");
 
-      setStatus("Asking for an upload link…");
+    setStatus("Asking for an upload link…");
       const presigned = await api<PresignResponse>("/resumes/presign", {
         method: "POST",
         body: {
@@ -148,20 +142,32 @@ export function NewSessionForm() {
         );
       }
 
-      const profile = await api<ProfileResponse>(
-        `/resumes/versions/${presigned.version_id}/profile`,
-      ).catch(() => null);
-      if (profile?.quality) setQuality(profile.quality);
+    const profile = await api<ProfileResponse>(
+      `/resumes/versions/${presigned.version_id}/profile`,
+    ).catch(() => null);
+    if (profile?.quality) setQuality(profile.quality);
+
+    return presigned.version_id;
+  }
+
+  const start = useMutation({
+    mutationFn: async (): Promise<SessionPlan> => {
+      // The JD first in combined mode: it is the cheap one, and failing on a
+      // 40-character paste before a 10 MB upload is the kinder order.
+      const jdVersionId = NEEDS_JD.has(source) ? await submitJd() : undefined;
+      const resumeVersionId = NEEDS_RESUME.has(source) ? await uploadResume() : undefined;
 
       setStatus("Building your interview plan…");
       return api<SessionPlan>("/sessions", {
         method: "POST",
         body: {
-          mode: "resume",
+          // `source` *is* the mode -- see the type.
+          mode: source,
           seniority,
           purpose: "practice",
           target_minutes: minutes,
-          resume_version_id: presigned.version_id,
+          jd_version_id: jdVersionId,
+          resume_version_id: resumeVersionId,
         },
       });
     },
@@ -170,7 +176,12 @@ export function NewSessionForm() {
   });
 
   const error = start.error as ApiError | null;
-  const ready = source === "jd" ? text.length >= 40 : !!file && !fileError;
+  // Every document the chosen mode needs, and nothing it doesn't. The server
+  // enforces the same rule (`sessions.py` rejects a combined session missing
+  // either); this is the faster, kinder no.
+  const ready =
+    (!NEEDS_JD.has(source) || text.length >= 40) &&
+    (!NEEDS_RESUME.has(source) || (!!file && !fileError));
 
   function chooseFile(chosen: File | null) {
     setFileError(null);
@@ -198,25 +209,34 @@ export function NewSessionForm() {
       }}
     >
       <div className="row" role="tablist" aria-label="What should choose the topics?">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={source === "jd"}
-          className={source === "jd" ? "" : "secondary"}
-          onClick={() => setSource("jd")}
-        >
-          A job description
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={source === "resume"}
-          className={source === "resume" ? "" : "secondary"}
-          onClick={() => setSource("resume")}
-        >
-          My resume
-        </button>
+        {(
+          [
+            ["jd", "A job description"],
+            ["resume", "My resume"],
+            ["combined", "Both"],
+          ] as const
+        ).map(([value, caption]) => (
+          <button
+            key={value}
+            type="button"
+            role="tab"
+            aria-selected={source === value}
+            className={source === value ? "" : "secondary"}
+            onClick={() => setSource(value)}
+          >
+            {caption}
+          </button>
+        ))}
       </div>
+
+      {source === "combined" && (
+        <p className="small muted" style={{ margin: 0 }}>
+          With both, the questions come from the <strong>overlap</strong> — what the role asks for
+          and you have actually done. Where the role wants something your resume doesn&rsquo;t
+          evidence, you&rsquo;ll be asked whether you could get there, not marked down for not
+          being there already.
+        </p>
+      )}
 
       {error && (
         <p className="error" role="alert">
@@ -231,16 +251,18 @@ export function NewSessionForm() {
       )}
 
       <div>
-        <label htmlFor="title">{source === "jd" ? "Role title" : "Label for this resume"}</label>
+        <label htmlFor="title">
+          {NEEDS_JD.has(source) ? "Role title" : "Label for this resume"}
+        </label>
         <input
           id="title"
           value={title}
-          placeholder={source === "jd" ? "Senior Backend Engineer" : "My resume"}
+          placeholder={NEEDS_JD.has(source) ? "Senior Backend Engineer" : "My resume"}
           onChange={(event) => setTitle(event.target.value)}
         />
       </div>
 
-      {source === "jd" ? (
+      {NEEDS_JD.has(source) && (
         <div>
           <label htmlFor="jd">Job description</label>
           <textarea
@@ -257,7 +279,9 @@ export function NewSessionForm() {
             produces a vague interview, and we&rsquo;ll tell you if that happens.
           </p>
         </div>
-      ) : (
+      )}
+
+      {NEEDS_RESUME.has(source) && (
         <div>
           <label htmlFor="resume">Your resume</label>
           <input

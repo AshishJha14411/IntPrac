@@ -195,6 +195,16 @@ class SessionQuestion(Base, UUIDPrimaryKey, Timestamps):
     source_profile_item_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("profile_items.id", ondelete="SET NULL")
     )
+    #: Frozen copy of the bank question's follow-ups, for the same reason the
+    #: rubric is frozen (FR-P5): re-versioning the bank tomorrow must not change
+    #: what a live interview asks. Copying also keeps the turn loop off the
+    #: `bank_question` relationship, which would be lazy IO after an await --
+    #: `MissingGreenlet` in production and nowhere else (Appendix D.4).
+    #:
+    #: Empty for authored questions, which fall back to the concept signpost.
+    followups: Mapped[list[dict[str, str]]] = mapped_column(
+        JSONType, nullable=False, default=list
+    )
 
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
