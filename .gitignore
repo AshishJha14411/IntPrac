@@ -35,3 +35,11 @@ Thumbs.db
 
 # --- speech model (fetched by `npm run fetch:model`, ~40 MB) ---
 frontend/public/models/
+
+# --- celery beat runtime state ---
+# A SQLite schedule beat writes as it runs. It was committed once by accident
+# and broke CI: a database plus a stale write-ahead log, written on Windows and
+# reopened on a Linux runner. Beat then failed to start, nothing drained the
+# outbox, and the smoke test failed several steps later with no obvious link.
+celerybeat-schedule*
+celerybeat.pid

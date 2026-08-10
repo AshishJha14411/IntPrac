@@ -198,7 +198,11 @@ services:
     volumes:
       - ./backend:/app:rw
     # Drains the transactional outbox (NFR-S6) and runs retention jobs.
-    command: ["celery", "-A", "app.workers.celery_app.celery_app", "beat", "-l", "INFO"]
+    # `--schedule` out of the mounted source tree. Beat writes this file
+    # continuously; leaving it in ./backend means it lands in `git status`
+    # forever and, once, in a commit.
+    command: ["celery", "-A", "app.workers.celery_app.celery_app", "beat",
+              "--schedule", "/tmp/celerybeat-schedule", "-l", "INFO"]
     healthcheck:
       disable: true
 

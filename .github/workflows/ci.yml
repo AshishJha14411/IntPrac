@@ -1,12 +1,16 @@
 name: CI
 
 on:
-  # `dev` is where work lands; `main` is what deploys. Both get the full suite
-  # on push so a broken dev is visible immediately rather than at PR time.
+  # `dev` is where work lands; `main` is what deploys. Push only -- there is no
+  # `pull_request` trigger, because a PR from dev to main has the same head SHA
+  # that was already built on push, and building it twice buys nothing.
+  #
+  # This does not weaken branch protection: required status checks match by
+  # commit SHA, not by trigger, so the run from the push to `dev` is what
+  # satisfies the gate on the PR. The one thing it gives up is testing the
+  # *merge* commit, which matters only when main has moved on since dev
+  # branched -- at which point rebasing dev re-triggers CI anyway.
   push: { branches: [main, dev] }
-  # Every PR into either, which is the gate that actually protects main --
-  # branch protection can require these checks before a merge is allowed.
-  pull_request: { branches: [main, dev] }
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -139,9 +143,29 @@ jobs:
         # interpreter explicitly does not care. The bit is set too; this is the
         # belt to that braces.
         run: bash ./scripts/smoke.sh
-      - name: Logs on failure
+      # A failing smoke run used to mean scrolling 200 interleaved lines to find
+      # out which of six containers died. This writes a short digest to the job
+      # summary page -- container states first, then only the log lines that
+      # matter -- so the cause is visible without opening the raw log at all.
+      - name: Diagnose on failure
         if: failure()
-        run: docker compose logs --tail 200
+        run: |
+          {
+            echo '## Smoke failed'
+            echo '### Container states'
+            echo '```'; docker compose ps -a; echo '```'
+            for svc in api worker beat; do
+              echo "### $svc (last 40)"
+              echo '```'; docker compose logs --tail 40 --no-color "$svc" 2>&1 || true; echo '```'
+            done
+            echo '### Tracebacks and errors anywhere in the stack'
+            echo '```'
+            docker compose logs --no-color 2>&1 \
+              | grep -iE "traceback|error|exception|critical|refused|timeout" \
+              | tail -40 || echo "(none matched)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          docker compose logs --tail 200 --no-color
 
   image-scan:
     runs-on: ubuntu-latest
