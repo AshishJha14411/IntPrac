@@ -22,6 +22,28 @@ ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[31m✗\033[0m %s\n' "$1"; FAIL=$((FAIL+1)); }
 jsonf() { sed -n "s/.*\"$1\": *\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" | head -1; }
 
+# `curl -f` fails the script on a non-2xx but throws the response body away --
+# and the body is where problem+json puts the reason. Every failure this
+# script has produced in CI has therefore arrived as "exit code 22" and
+# nothing else, which is exactly as useful as no test at all. This keeps the
+# status and the body, prints both, and still fails.
+req() {
+  local method="$1" url="$2"; shift 2
+  local combined status body
+  combined=$(curl -sS -w $'\n%{http_code}' -X "$method" "$url" "$@") || {
+    printf '  \033[31m✗\033[0m %s %s -> curl transport failure\n' "$method" "${url#"$API"}" >&2
+    return 1
+  }
+  status=${combined##*$'\n'}
+  body=${combined%$'\n'*}
+  case "$status" in
+    2??) printf '%s' "$body"; return 0 ;;
+  esac
+  printf '  \033[31m✗\033[0m %s %s -> HTTP %s\n      %s\n' \
+    "$method" "${url#"$API"}" "$status" "$(printf '%s' "$body" | head -c 400)" >&2
+  return 1
+}
+
 echo "==> health"
 READY=$(curl -fsS "$API/health/ready") && ok "api ready" || bad "api not ready"
 # ADR 010: which dispatch mode this run exercised. Both paths must pass this
@@ -89,14 +111,14 @@ curl -fsS -o /dev/null -X POST "$API/sessions/$SID/consent" -H "$A" -H 'Content-
 ok "consent recorded"
 
 echo "==> turn loop"
-TURN=$(curl -fsS -X POST "$API/sessions/$SID/start" -H "$A")
+TURN=$(req POST "$API/sessions/$SID/start" -H "$A")
 ANSWER="It has to walk past all those rows first and throw them away, so the deeper you page the slower it gets. The fix is to remember where you stopped and start there next time, like a bookmark instead of counting pages, and you need a tiebreaker or rows repeat."
 N=0
 while :; do
   QID=$(printf '%s' "$TURN" | jsonf question_id)
   [ -z "$QID" ] && break
   N=$((N+1))
-  R=$(curl -fsS -X POST "$API/sessions/$SID/answers" -H "$A" -H 'Content-Type: application/json' \
+  R=$(req POST "$API/sessions/$SID/answers" -H "$A" -H 'Content-Type: application/json' \
     -d "{\"question_id\":\"$QID\",\"transcript\":\"$ANSWER\",\"idempotency_key\":\"smoke-$SID-$N\"}")
   case "$R" in *'"session_completed":true'*) break;; esac
   TURN=$(printf '%s' "$R" | sed -n 's/.*"next_turn":\(.*\)}$/\1/p')

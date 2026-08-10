@@ -37,10 +37,35 @@ case "$PHASE" in
   *) die "unknown phase '$PHASE' (want: infra, secrets, all)" ;;
 esac
 
+# A .env file is NOT a shell script, and sourcing one is a bug waiting for the
+# right value. `. ./.env.production` ran
+#   SYNC_DATABASE_URL=postgresql+psycopg://...?sslmode=require&channel_binding=require
+# as two commands: an assignment backgrounded at the unquoted `&`, then a
+# separate `channel_binding=require`. The variable came out truncated -- and
+# because the truncation happened at an `&`, only the URLs with query strings
+# were affected, so DATABASE_URL was fine and SYNC_DATABASE_URL silently was
+# not. Parsing it as key/value, which is what the format actually is, cannot
+# do that.
+load_env() {
+  local file="$1" line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in '' | '#'*) continue ;; esac
+    case "$line" in *=*) ;; *) continue ;; esac
+    key=${line%%=*}
+    value=${line#*=}
+    key=${key#"${key%%[![:space:]]*}"}   # trim leading space
+    key=${key%"${key##*[![:space:]]}"}   # trim trailing space
+    case "$value" in
+      \"*\") value=${value#\"}; value=${value%\"} ;;
+      \'*\') value=${value#\'}; value=${value%\'} ;;
+    esac
+    export "$key=$value"
+  done < "$file"
+}
+
 ENV_FILE="${ENV_FILE:-.env.production}"
 if [ -f "$ENV_FILE" ]; then
-  # shellcheck disable=SC1090
-  set -a; . "./$ENV_FILE"; set +a
+  load_env "./$ENV_FILE"
 elif [ "$PHASE" = "infra" ] && [ -n "${GCP_PROJECT:-}" ]; then
   say "no $ENV_FILE; using the environment (infra needs no credentials)"
 else
@@ -61,6 +86,13 @@ PROJECT_NUMBER=$(gcloud projects describe "$GCP_PROJECT" --format='value(project
   || die "cannot read project '$GCP_PROJECT'. Check the ID (not the display
   name, not the number) and that $(gcloud config get account) can see it."
 ok "project $GCP_PROJECT (number $PROJECT_NUMBER)"
+
+# Derived, not discovered, so the closing summary can print it in every phase.
+# It used to be assigned inside the infra block, which meant running `secrets`
+# on its own got all the way to the end and then died on `POOL_ID: unbound
+# variable` -- after doing all the work, so it looked like a failure and was
+# not one.
+POOL_ID="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}"
 
 # Checked here, first, because every single command below fails without it and
 # the errors do not say so. `gcloud services enable run.googleapis.com` on an
@@ -250,7 +282,7 @@ GCP is ready. Now set these nine in GitHub:
   GCP_SERVICE_ACCOUNT               ${SA}
   GCP_WORKLOAD_IDENTITY_PROVIDER    ${POOL_ID}/providers/${PROVIDER}
   GCS_BUCKET                        ${GCS_BUCKET:-<your-bucket-name>}
-  API_ORIGIN                        (fill after the first deploy, see below)
+  API_ORIGIN                        ${API_ORIGIN:-(fill after the first deploy, see below)}
   FRONTEND_ORIGIN                   ${FRONTEND_ORIGIN:-https://<your-vercel-app>.vercel.app}
   VERCEL_TOKEN                      from vercel.com/account/tokens
   VERCEL_ORG_ID                     from .vercel/project.json after 'vercel link'
