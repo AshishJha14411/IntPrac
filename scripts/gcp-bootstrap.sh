@@ -189,6 +189,31 @@ put interview-google-client-secret "${GOOGLE_CLIENT_SECRET:-}"
 put interview-s3-key-id          "${S3_ACCESS_KEY_ID:-}"
 put interview-s3-secret          "${S3_SECRET_ACCESS_KEY:-}"
 
+# ---------------------------------------------------------------------------
+# The browser PUTs resumes straight to the bucket -- the API only signs the
+# URL and never sees the bytes. That is a cross-origin request from the Vercel
+# app to storage.googleapis.com, so without a CORS rule the preflight fails
+# and every upload dies in the browser while the API logs a perfectly
+# successful signing call. The compose stack sets the same rule on MinIO;
+# nothing set it on GCS.
+if [ -n "${GCS_BUCKET:-}" ] && [ -n "${FRONTEND_ORIGIN:-}" ]; then
+  say "Bucket CORS"
+  CORS_TMP=$(mktemp)
+  cat > "$CORS_TMP" <<JSON
+[{"origin": ["${FRONTEND_ORIGIN}"],
+  "method": ["GET", "PUT", "HEAD"],
+  "responseHeader": ["Content-Type", "Content-MD5", "x-goog-resumable"],
+  "maxAgeSeconds": 3600}]
+JSON
+  gcloud storage buckets update "gs://${GCS_BUCKET}" --cors-file="$CORS_TMP" --quiet
+  rm -f "$CORS_TMP"
+  ok "gs://${GCS_BUCKET} accepts uploads from ${FRONTEND_ORIGIN}"
+else
+  printf '  \033[33m!\033[0m skipping bucket CORS (needs GCS_BUCKET and FRONTEND_ORIGIN).\n'
+  printf '    Re-run once the Vercel URL exists, or resume upload will fail in\n'
+  printf '    the browser with the API reporting no error at all.\n'
+fi
+
 fi # end secrets phase
 
 # ---------------------------------------------------------------------------
