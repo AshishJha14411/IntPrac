@@ -411,6 +411,39 @@ def test_the_runtime_account_is_not_the_deployer() -> None:
     )
 
 
+def test_gcloud_args_starting_with_a_dash_use_the_equals_form() -> None:
+    """`--args "-m,module"` is parsed as a flag, not a value.
+
+    gcloud fails it with "argument --args: expected one argument", which
+    describes the symptom and hides the cause -- the argument is visibly right
+    there, it just begins with a dash, so argparse claims it as the next flag.
+    `--args=-m,module` is unambiguous.
+
+    This shipped because `--args "upgrade,head"` in the migrate step works
+    fine: it does not start with a dash. So the pattern looked proven by a
+    passing step, and broke in the next two steps that used a `python -m`
+    invocation.
+    """
+    if not DEPLOY.is_file():
+        pytest.skip("deploy.yml not present in this checkout")
+    yaml = pytest.importorskip("yaml")
+    doc = yaml.safe_load(DEPLOY.read_text(encoding="utf-8"))
+
+    broken: list[str] = []
+    for step in doc["jobs"]["backend"]["steps"]:
+        for line in (step.get("run") or "").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            # The space-separated form, with a value that begins with a dash.
+            match = re.search(r'--args\s+"(-[^"]*)"', stripped)
+            if match:
+                broken.append(f"{step.get('name', '?')}: --args \"{match.group(1)}\"")
+    assert not broken, (
+        "gcloud will read these values as flags; use --args=\"...\" instead: " + str(broken)
+    )
+
+
 def test_the_api_service_can_scale_to_zero() -> None:
     """`--min-instances 0` is not a tuning knob here, it is the cost model."""
     if not DEPLOY.is_file():

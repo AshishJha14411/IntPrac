@@ -113,12 +113,18 @@ jobs:
 
       # Seeding is idempotent (it validates the authoring bar, then upserts),
       # so it runs every deploy rather than being a thing someone remembers.
+      # `--args=` with an equals sign, not a space. A value beginning with `-`
+      # is read by gcloud's parser as the next flag, so `--args "-m,app..."`
+      # fails with "argument --args: expected one argument" -- an error that
+      # describes the symptom and not the cause, since the argument is plainly
+      # right there. Migrate escapes this only because "upgrade,head" happens
+      # not to start with a dash.
       - name: Seed the question bank
         run: |
           gcloud run jobs deploy interview-seed \
             --image "$IMAGE" --region "$GCP_REGION" \
             --service-account "$GCP_RUNTIME_SA" \
-            --command python --args "-m,app.content.seed" \
+            --command python --args="-m,app.content.seed" \
             --set-secrets "SYNC_DATABASE_URL=interview-sync-db-url:latest" \
             --max-retries 0 --quiet
           gcloud run jobs execute interview-seed \
@@ -192,7 +198,7 @@ jobs:
             gcloud run jobs deploy "interview-$job" \
               --image "$IMAGE" --region "$GCP_REGION" \
               --service-account "$GCP_RUNTIME_SA" \
-              --command python --args "-m,app.entrypoints.jobs,$job" \
+              --command python --args="-m,app.entrypoints.jobs,$job" \
               --set-env-vars "^;^ENVIRONMENT=production;LOG_FORMAT=json;CELERY_TASK_ALWAYS_EAGER=true;CORS_ORIGINS=$FRONTEND_ORIGIN;$COMMON_STORAGE" \
               --set-secrets "DATABASE_URL=interview-db-url:latest,SYNC_DATABASE_URL=interview-sync-db-url:latest,REDIS_URL=interview-redis-url:latest,GEMINI_API_KEY=interview-gemini-key:latest,S3_ACCESS_KEY_ID=interview-s3-key-id:latest,S3_SECRET_ACCESS_KEY=interview-s3-secret:latest" \
               --max-retries 1 --task-timeout 15m --quiet
