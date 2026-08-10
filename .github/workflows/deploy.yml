@@ -211,6 +211,15 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     needs: backend # the UI must never be newer than the API it calls
+    # That ordering is the reason `frontend/vercel.json` sets
+    # git.deploymentEnabled to false for main and dev. Vercel's Git
+    # integration would otherwise deploy on push, in parallel with this job and
+    # without waiting for the migration -- so a release that adds a column and
+    # the UI that reads it would race, and the UI would usually win. Turning
+    # the Git trigger off leaves exactly one path to production.
+    #
+    # To hand the frontend back to Vercel instead, delete that file and this
+    # job together. Do not keep both.
     runs-on: ubuntu-latest
     environment: production
     defaults:
