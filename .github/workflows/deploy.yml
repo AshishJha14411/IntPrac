@@ -55,6 +55,7 @@ env:
   GCP_PROJECT: promptopia-428409-h3
   GCP_REGION: asia-south1
   GCP_SERVICE_ACCOUNT: interview-deployer@promptopia-428409-h3.iam.gserviceaccount.com
+  GCP_RUNTIME_SA: interview-runtime@promptopia-428409-h3.iam.gserviceaccount.com
   GCP_WIF_PROVIDER: projects/379068176383/locations/global/workloadIdentityPools/github/providers/intprac
   GCS_BUCKET: intprac-uploads-379068176383
   API_ORIGIN: https://interview-api-379068176383.asia-south1.run.app
@@ -103,6 +104,7 @@ jobs:
         run: |
           gcloud run jobs deploy interview-migrate \
             --image "$IMAGE" --region "$GCP_REGION" \
+            --service-account "$GCP_RUNTIME_SA" \
             --command alembic --args "upgrade,head" \
             --set-secrets "MIGRATION_DATABASE_URL=interview-migration-db-url:latest" \
             --max-retries 0 --quiet
@@ -115,6 +117,7 @@ jobs:
         run: |
           gcloud run jobs deploy interview-seed \
             --image "$IMAGE" --region "$GCP_REGION" \
+            --service-account "$GCP_RUNTIME_SA" \
             --command python --args "-m,app.content.seed" \
             --set-secrets "SYNC_DATABASE_URL=interview-sync-db-url:latest" \
             --max-retries 0 --quiet
@@ -161,6 +164,7 @@ jobs:
           # here; harmless while nothing publishes.
           gcloud run deploy interview-api \
             --image "$IMAGE" --region "$GCP_REGION" \
+            --service-account "$GCP_RUNTIME_SA" \
             --platform managed --allow-unauthenticated \
             --port 8080 --cpu 1 --memory 1Gi \
             --min-instances 0 --max-instances 3 \
@@ -187,6 +191,7 @@ jobs:
           for job in retention drain; do
             gcloud run jobs deploy "interview-$job" \
               --image "$IMAGE" --region "$GCP_REGION" \
+              --service-account "$GCP_RUNTIME_SA" \
               --command python --args "-m,app.entrypoints.jobs,$job" \
               --set-env-vars "^;^ENVIRONMENT=production;LOG_FORMAT=json;CELERY_TASK_ALWAYS_EAGER=true;CORS_ORIGINS=$FRONTEND_ORIGIN;$COMMON_STORAGE" \
               --set-secrets "DATABASE_URL=interview-db-url:latest,SYNC_DATABASE_URL=interview-sync-db-url:latest,REDIS_URL=interview-redis-url:latest,GEMINI_API_KEY=interview-gemini-key:latest,S3_ACCESS_KEY_ID=interview-s3-key-id:latest,S3_SECRET_ACCESS_KEY=interview-s3-secret:latest" \
@@ -239,12 +244,22 @@ jobs:
       - name: Roll back on a failed verification
         if: failure()
         run: |
-          echo "::warning::routing traffic back to the previous revision"
+          # `[ -n "$PREV" ] && gcloud ...` as the last line made this step *fail*
+          # whenever there was nothing to roll back to -- the test is false, the
+          # AND-list returns 1, and the step goes red. On the first deploy that
+          # turned "there is no previous revision, which is fine" into a second
+          # red X underneath the real error, which is exactly when you least
+          # want a spurious one.
           PREV=$(gcloud run revisions list --service interview-api \
             --region "$GCP_REGION" --format="value(name)" \
-            --sort-by="~metadata.creationTimestamp" | sed -n 2p)
-          [ -n "$PREV" ] && gcloud run services update-traffic interview-api \
-            --region "$GCP_REGION" --to-revisions "$PREV=100" --quiet
+            --sort-by="~metadata.creationTimestamp" 2>/dev/null | sed -n 2p)
+          if [ -n "$PREV" ]; then
+            echo "::warning::routing traffic back to $PREV"
+            gcloud run services update-traffic interview-api \
+              --region "$GCP_REGION" --to-revisions "$PREV=100" --quiet
+          else
+            echo "no previous revision to roll back to; nothing serving changed"
+          fi
 
 # ---------------------------------------------------------------------------
 # There is no frontend job here, on purpose.

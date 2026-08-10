@@ -358,6 +358,59 @@ def test_the_auth_step_still_has_both_halves() -> None:
     )
 
 
+def test_every_cloud_run_deploy_names_a_runtime_service_account() -> None:
+    """Omitting `--service-account` silently picks the worst possible identity.
+
+    Cloud Run defaults to ``NNN-compute@developer.gserviceaccount.com``, which
+    carries ``roles/editor`` on the whole project -- so a container running as
+    it can do nearly anything to your infrastructure. It also, despite that,
+    cannot read Secret Manager payloads, so the first real deploy died at job
+    creation with "Permission denied on secret ... for Revision service
+    account", which reads like the *deployer* lacks access when the deployer
+    has it and is not the account being complained about.
+
+    Both problems have one fix: name a runtime account that can read secrets
+    and do nothing else. This asserts every deploy does.
+    """
+    if not DEPLOY.is_file():
+        pytest.skip("deploy.yml not present in this checkout")
+    yaml = pytest.importorskip("yaml")
+    doc = yaml.safe_load(DEPLOY.read_text(encoding="utf-8"))
+
+    missing: list[str] = []
+    for step in doc["jobs"]["backend"]["steps"]:
+        script = step.get("run") or ""
+        # Each `gcloud run [jobs] deploy` and its continued lines form one
+        # logical command; split on the deploy verb and check each fragment.
+        for fragment in re.split(r"gcloud run (?:jobs )?deploy", script)[1:]:
+            command = fragment.split("--quiet")[0]
+            if "--service-account" not in command:
+                missing.append(f"{step.get('name', '?')}: {command.strip()[:60]}")
+    assert not missing, (
+        "these Cloud Run deploys fall back to the default compute service "
+        f"account (roles/editor, and no secret access): {missing}"
+    )
+
+
+def test_the_runtime_account_is_not_the_deployer() -> None:
+    """They must be different identities, or least privilege buys nothing.
+
+    The deployer holds run.admin and can redeploy the service. An application
+    that runs as its own deployer is one compromise away from being permanent.
+    """
+    if not DEPLOY.is_file():
+        pytest.skip("deploy.yml not present in this checkout")
+    yaml = pytest.importorskip("yaml")
+    env = yaml.safe_load(DEPLOY.read_text(encoding="utf-8")).get("env") or {}
+    deployer = env.get("GCP_SERVICE_ACCOUNT")
+    runtime = env.get("GCP_RUNTIME_SA")
+    assert runtime, "no runtime service account is defined"
+    assert runtime != deployer, (
+        "the app would run as the account that deploys it, so anything that "
+        "compromises the app can redeploy the app"
+    )
+
+
 def test_the_api_service_can_scale_to_zero() -> None:
     """`--min-instances 0` is not a tuning knob here, it is the cost model."""
     if not DEPLOY.is_file():

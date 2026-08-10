@@ -181,6 +181,37 @@ retry gcloud iam service-accounts add-iam-policy-binding "$SA" \
 ok "$SA"
 
 # ---------------------------------------------------------------------------
+say "Runtime service account"
+# The identity the *container* runs as, which is not the one that deploys it.
+# Miss this and the first deploy dies at job creation with "Permission denied
+# on secret ... for Revision service account NNN-compute@developer" -- a
+# confusing error, because the deployer can read that secret perfectly well.
+#
+# The default would be NNN-compute@developer.gserviceaccount.com, and the
+# tempting fix is to grant that account secretAccessor. Don't: it comes with
+# roles/editor on the entire project, so every container would run with
+# permission to do almost anything to your infrastructure. This account can
+# read secrets and nothing else. It deliberately cannot deploy -- an app that
+# can redeploy itself is one compromise away from being permanent.
+RUNTIME_NAME="interview-runtime"
+RUNTIME="${RUNTIME_NAME}@${GCP_PROJECT}.iam.gserviceaccount.com"
+gcloud iam service-accounts describe "$RUNTIME" --quiet >/dev/null 2>&1 \
+  || gcloud iam service-accounts create "$RUNTIME_NAME" \
+       --display-name="interview-app runtime (Cloud Run)" --quiet
+printf '  waiting for IAM to see it '
+retry gcloud iam service-accounts describe "$RUNTIME" --quiet >/dev/null 2>&1
+printf ' visible\n'
+
+retry gcloud projects add-iam-policy-binding "$GCP_PROJECT" \
+  --member="serviceAccount:$RUNTIME" \
+  --role=roles/secretmanager.secretAccessor --quiet >/dev/null 2>&1
+
+# Deploying a service that *runs as* another account requires actAs on it.
+retry gcloud iam service-accounts add-iam-policy-binding "$RUNTIME" \
+  --member="serviceAccount:$SA" --role=roles/iam.serviceAccountUser --quiet >/dev/null 2>&1
+ok "$RUNTIME (secret access only)"
+
+# ---------------------------------------------------------------------------
 say "Workload Identity Federation (keyless -- no service-account JSON anywhere)"
 gcloud iam workload-identity-pools describe "$POOL" --location=global --quiet >/dev/null 2>&1 \
   || gcloud iam workload-identity-pools create "$POOL" \
