@@ -20,11 +20,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 } # gitleaks scans history, not just the diff
+        with: { fetch-depth: 0 } # scan history, not just the diff
+      # The tool directly, not `gitleaks/gitleaks-action`. The wrapper action
+      # contacts a licence server and fails closed without a key -- which it
+      # did here on the first run, reporting a "secret scanning failure" when
+      # the repository was in fact clean. A security check that cries wolf on
+      # day one is a check people disable in week two. Same binary, no licence,
+      # exit code we control.
       - name: Scan for committed credentials
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+            detect --source=/repo --log-opts="--all" --redact --no-banner \
+            --exit-code 1
 
   backend:
     runs-on: ubuntu-latest
@@ -126,7 +133,12 @@ jobs:
           docker compose logs api
           exit 1
       - name: Smoke
-        run: ./scripts/smoke.sh
+        # `bash <script>` rather than `./<script>`: the executable bit is a git
+        # file mode, and a Windows checkout does not carry one -- so the bit can
+        # silently go missing again on any future file. Invoking the
+        # interpreter explicitly does not care. The bit is set too; this is the
+        # belt to that braces.
+        run: bash ./scripts/smoke.sh
       - name: Logs on failure
         if: failure()
         run: docker compose logs --tail 200
