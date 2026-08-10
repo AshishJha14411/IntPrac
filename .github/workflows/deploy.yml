@@ -90,6 +90,64 @@ jobs:
           # `min-instances 0` is the whole cost model (ADR 010): nothing is
           # billed while idle, which only works because there is no worker.
 
+      # ---------------------------------------------------------------------
+      # Scheduled work, without a process that waits around to do it.
+      #
+      # Deleting beat along with the worker removed the only thing that ran
+      # retention. `app/entrypoints/jobs.py` existed for exactly this, but
+      # nothing invoked it -- so the six-month window was enforced by a
+      # docstring. Cloud Run Jobs cost nothing between executions, so this is
+      # the same bill as the always-on worker we removed: zero.
+      #
+      # Two jobs rather than one parameterised job, so each has its own
+      # schedule and its own failure history in the console.
+      # ---------------------------------------------------------------------
+      - name: Deploy the scheduled jobs
+        run: |
+          for job in retention drain; do
+            gcloud run jobs deploy "interview-$job" \
+              --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
+              --command python --args "-m,app.entrypoints.jobs,$job" \
+              --set-env-vars "ENVIRONMENT=production,LOG_FORMAT=json,CELERY_TASK_ALWAYS_EAGER=true" \
+              --set-secrets "DATABASE_URL=interview-db-url:latest,SYNC_DATABASE_URL=interview-sync-db-url:latest,REDIS_URL=interview-redis-url:latest,GEMINI_API_KEY=interview-gemini-key:latest,S3_ACCESS_KEY_ID=interview-s3-key-id:latest,S3_SECRET_ACCESS_KEY=interview-s3-secret:latest" \
+              --max-retries 1 --task-timeout 15m --quiet
+          done
+
+      - name: Schedule them
+        run: |
+          REGION="${{ secrets.GCP_REGION }}"
+          PROJECT="${{ secrets.GCP_PROJECT }}"
+          SA="${{ secrets.GCP_SERVICE_ACCOUNT }}"
+
+          # `gcloud scheduler jobs create` is not idempotent -- it fails if the
+          # job exists, which is every deploy after the first. describe-then-
+          # branch keeps this step re-runnable, which a deploy step has to be.
+          schedule() {
+            name="$1"; cron="$2"; target="$3"
+            uri="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1"
+            uri="$uri/namespaces/$PROJECT/jobs/$target:run"
+            verb=create
+            gcloud scheduler jobs describe "$name" --location="$REGION" \
+              --quiet >/dev/null 2>&1 && verb=update
+            gcloud scheduler jobs "$verb" http "$name" \
+              --location="$REGION" --schedule="$cron" --time-zone="Etc/UTC" \
+              --uri="$uri" --http-method=POST \
+              --oauth-service-account-email="$SA" \
+              --attempt-deadline=30m --quiet
+          }
+
+          # Retention: once a night, off the hour so it does not land in the
+          # same minute as every other cron on the planet.
+          schedule interview-retention-nightly "17 3 * * *" interview-retention
+
+          # Outbox sweeper. The request seam already drains after every commit
+          # (ADR 010), so this is a backstop for one specific case: an event
+          # whose inline drain failed on a request that was the last traffic
+          # the app saw. Without it that row waits for the next visitor, which
+          # on a quiet day is tomorrow. Hourly bounds the damage while staying
+          # inside Cloud Scheduler's free tier.
+          schedule interview-outbox-sweep "23 * * * *" interview-drain
+
       # Deploying and *working* are different claims. This asserts the running
       # revision is the one we built and is in the dispatch mode we intend --
       # the exact thing that was wrong in v1 for weeks with nobody noticing.
