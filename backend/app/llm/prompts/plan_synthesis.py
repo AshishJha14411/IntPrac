@@ -30,11 +30,39 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.content.types import (
+    MIN_CORE_CONCEPTS,
+    MIN_MISCONCEPTIONS,
+    MIN_SIGNALS_PER_CORE,
+)
+
 #: Ask for at most this many concepts per question. The authoring bar needs two
 #: core; four leaves room for a supporting one without paying for six rubrics'
 #: worth of output tokens on every question in the plan. Output dominates cost
 #: (~72% of a call), and this multiplies by the question count.
 MAX_CONCEPTS_PER_QUESTION = 4
+
+#: The bar, stated to the model in the numbers ``validate_question`` actually
+#: uses -- imported, not retyped, so the prompt cannot drift from the gate.
+#:
+#: Worth spelling out because the first live run failed entirely on it: a
+#: Clinical Trial Manager JD produced ten well-chosen topics
+#: (``vendor-cro-management``, ``protocol-deviation-capa``,
+#: ``risk-based-monitoring``) and **all ten were rejected** for having one core
+#: concept instead of two. The model had marked one `core` and the rest
+#: `supporting`, which is a perfectly reasonable reading of a weight field
+#: nobody had explained. The rubric was never told the rule it was graded on.
+_BAR = f"""\
+Every question must clear this bar or it is discarded:
+
+* At least {MIN_CORE_CONCEPTS} concepts with `weight` set to "core". This is the
+  one most often got wrong: "core" means the answer is incomplete without it,
+  and a good answer at this level always has more than one such idea. Do not
+  mark a single concept core and the rest supporting.
+* At least {MIN_SIGNALS_PER_CORE} `acceptable_signals` on every core concept.
+* At least {MIN_MISCONCEPTIONS} `common_misconceptions` across the question.
+* `why_it_matters` on every concept, `signpost` on every core concept.
+* One "strong" and one "weak" golden answer."""
 
 SYSTEM = """\
 You write complete interview plans for a platform that scores UNDERSTANDING, \
@@ -88,7 +116,11 @@ clinical protocols, legal advice, medical diagnosis. Ask about process, \
 judgement and how the person reasons, never about facts a wrong rubric would \
 teach incorrectly.
 
+__BAR__
+
 Return JSON only."""
+
+SYSTEM = SYSTEM.replace("__BAR__", _BAR)
 
 
 def build_synthesis_payload(
@@ -247,6 +279,10 @@ PLAN_JSON_SCHEMA: dict[str, Any] = {
                                 "weight": {
                                     "type": "string",
                                     "enum": ["core", "supporting", "bonus"],
+                                    "description": (
+                                        "At least two per question must be 'core'. Core "
+                                        "means the answer is incomplete without it."
+                                    ),
                                 },
                                 "why_it_matters": {"type": "string"},
                                 "acceptable_signals": {

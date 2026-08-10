@@ -57,33 +57,33 @@ _SLUG = re.compile(r"[^a-z0-9-]+")
 #: Anything that will be shown or spoken goes through ``sanitise_question``.
 MAX_LABEL_WORDS = 8
 
-#: Refuse to invent content here. A wrong rubric about caching is a bad practice
-#: question; a wrong rubric about drug interactions or a legal filing is
-#: misinformation with a score attached, and neither the candidate nor anyone on
-#: this project could tell. Synthesis in these fields is dropped and the plan
-#: falls back to the bank.
-SENSITIVE_DOMAIN_MARKERS = (
-    "clinical",
-    "medical",
-    "medicine",
-    "pharmacolog",
-    "pharmacovigilance",
-    "drug-safety",
-    "diagnos",
-    "legal",
-    "law",
-    "attorney",
-    "paralegal",
-)
+# ── On regulated fields, and why there is no domain blocklist here ──────────
+#
+# There was one: any domain matching "clinical", "medical", "legal" and so on
+# was refused, on the reasoning that a confidently wrong rubric about drug
+# safety is misinformation with a score attached and nobody here could catch it.
+# The reasoning is sound. The control was not, and the first real test showed
+# why: a **Clinical Trial Manager** job description was refused on the word
+# "clinical" and fell back to the bank, so an operations manager was asked about
+# API versioning and async concurrency -- the precise failure this feature
+# exists to fix, reintroduced by the thing meant to make it safe.
+#
+# Two separate mistakes. The match was far too coarse: trial management is site
+# activation, CRO performance, TMF inspection readiness and enrolment strategy,
+# and none of that is a medical claim. And the *failure direction* was wrong --
+# falling back to a software bank is not a safe default for a non-software
+# candidate, it is the original bug wearing a warning label.
+#
+# What actually holds the line is narrower and already in place: the system
+# prompt forbids inventing specifics in regulated fields and requires questions
+# about process, judgement and reasoning instead, and `validate_question` still
+# rejects anything that misses the authoring bar. If a real refusal is ever
+# needed it must surface to the candidate as a refusal, never as a silently
+# irrelevant interview.
 
 
 def _slug(value: str) -> str:
     return _SLUG.sub("-", value.strip().lower()).strip("-")[:80]
-
-
-def is_sensitive_domain(domain: str) -> bool:
-    lowered = domain.lower()
-    return any(marker in lowered for marker in SENSITIVE_DOMAIN_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -241,11 +241,6 @@ async def synthesise_plan(
         return None
 
     domain = _slug(result.data.get("domain", "")) or "general"
-    if is_sensitive_domain(domain):
-        # Recorded, because the call was billed whether or not we use it.
-        usage.record_async(db, result.usage)
-        logger.warning("plan_synthesis_refused_sensitive_domain", domain=domain)
-        return None
 
     built: list[SynthesisedQuestion] = []
     seen: set[str] = set()

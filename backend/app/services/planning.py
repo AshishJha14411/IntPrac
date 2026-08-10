@@ -515,8 +515,15 @@ async def _build_from_synthesis(
         )
     )
 
+    # The model is asked for a count and does not always honour it -- a 10
+    # question plan came back with 11. Extra questions are not a bonus: the
+    # duration shown to the candidate is derived from the count, so an
+    # unrequested eleventh makes a 20-minute session overrun and the estimate a
+    # lie. They are still cached in the bank, so nothing generated is wasted.
+    wanted = target_question_count(interview.target_minutes)
+
     questions: list[SessionQuestion] = []
-    for ordinal, planned in enumerate(synthesised.questions):
+    for ordinal, planned in enumerate(synthesised.questions[:wanted]):
         bank_question = planned.question
         session_question = SessionQuestion(
             session_id=interview.id,
