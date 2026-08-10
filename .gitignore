@@ -44,3 +44,8 @@ frontend/public/models/
 # outbox, and the smoke test failed several steps later with no obvious link.
 celerybeat-schedule*
 celerybeat.pid
+
+# --- vercel ---
+# `vercel link` writes .vercel/project.json (org and project ids) and
+# `vercel build` writes .vercel/output, which is the whole built site.
+.vercel/
