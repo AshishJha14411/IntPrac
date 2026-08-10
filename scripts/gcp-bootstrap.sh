@@ -274,32 +274,32 @@ fi # end secrets phase
 cat <<EOF
 
 $(printf '\033[32m----------------------------------------------------------------\033[0m')
-GCP is ready. Now set these nine in GitHub:
-  https://github.com/${GITHUB_REPO}/settings/secrets/actions
+GCP is ready, and the deploy needs nothing set in GitHub.
 
-  GCP_PROJECT                       ${GCP_PROJECT}
-  GCP_REGION                        ${GCP_REGION}
-  GCP_SERVICE_ACCOUNT               ${SA}
-  GCP_WORKLOAD_IDENTITY_PROVIDER    ${POOL_ID}/providers/${PROVIDER}
-  GCS_BUCKET                        ${GCS_BUCKET:-<your-bucket-name>}
-  API_ORIGIN                        ${API_ORIGIN:-(fill after the first deploy, see below)}
-  FRONTEND_ORIGIN                   ${FRONTEND_ORIGIN:-https://<your-vercel-app>.vercel.app}
-  VERCEL_TOKEN                      from vercel.com/account/tokens
-  VERCEL_ORG_ID                     from .vercel/project.json after 'vercel link'
-  VERCEL_PROJECT_ID                 from the same file
+The values it uses are literals in .github/workflows/deploy.yml -- a project
+id, a region, a service account, a bucket and two URLs are addresses, not
+credentials. If any of these disagrees with the workflow, edit the workflow:
 
-API_ORIGIN is a chicken-and-egg: Cloud Run mints the URL on first deploy. Get
-it without one by deploying by hand once --
+  GCP_PROJECT           ${GCP_PROJECT}
+  GCP_REGION            ${GCP_REGION}
+  GCP_SERVICE_ACCOUNT   ${SA}
+  GCP_WIF_PROVIDER      ${POOL_ID}/providers/${PROVIDER}
+  GCS_BUCKET            ${GCS_BUCKET:-<not set in $ENV_FILE>}
+  API_ORIGIN            ${API_ORIGIN:-<not set in $ENV_FILE>}
+  FRONTEND_ORIGIN       ${FRONTEND_ORIGIN:-<not set in $ENV_FILE>}
 
-  gcloud run deploy interview-api --region ${GCP_REGION} \\
-    --image ${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/interview/api:bootstrap \\
-    --allow-unauthenticated --format='value(status.url)'
+Two things still live outside this script, because they are set where the
+thing that consumes them runs:
 
--- or just run the workflow, read the URL off the failed verify step, set the
-secret, and re-run. Both work; the second is less typing.
+1. Vercel -> Settings -> Environment Variables, for Production:
+     NEXT_PUBLIC_API_BASE_URL = ${API_ORIGIN:-<your Cloud Run url>}
+   Next.js compiles this into the bundle, so save it and then Redeploy --
+   setting it alone changes nothing about the site already serving.
 
-Last: add \${API_ORIGIN}/api/v1/auth/google/callback to the Authorised redirect
-URIs of your OAuth client. It is compared byte for byte, so a trailing slash
-is a different URI.
+2. Your Google OAuth client -> Authorised redirect URIs, add:
+     ${API_ORIGIN:-<your Cloud Run url>}/api/v1/auth/google/callback
+   Compared byte for byte, so a trailing slash is a different URI.
+
+Then deploy:  git checkout main && git merge dev && git push
 $(printf '\033[32m----------------------------------------------------------------\033[0m')
 EOF

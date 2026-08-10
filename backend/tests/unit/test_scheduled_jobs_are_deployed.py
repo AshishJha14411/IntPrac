@@ -26,6 +26,7 @@ the test itself to be wrong.
 from __future__ import annotations
 
 import itertools
+import re
 from pathlib import Path
 
 import pytest
@@ -305,6 +306,55 @@ def test_the_scheduled_jobs_can_reach_object_storage() -> None:
     assert "S3_ENDPOINT_URL" in step or "COMMON_STORAGE" in step, (
         "the retention job has no storage endpoint and would silently fail to "
         "delete the files it exists to delete"
+    )
+
+
+def test_the_deploy_needs_nothing_configured_in_the_repo_settings() -> None:
+    """No `${{ secrets.* }}` in the deploy workflow.
+
+    The first version needed ten repository secrets before it could run once.
+    None of them was a credential -- a project id, a region, a service-account
+    email, a Workload Identity path, a bucket name and two public URLs are
+    addresses. Storing addresses in a secrets page bought nothing and cost a
+    setup step that fails late and only for whoever forgot one of the ten.
+
+    They are literals now, so a fresh clone deploys with no console setup at
+    all. This test stops them drifting back: a `${{ secrets.X }}` here is a
+    hidden prerequisite, and the first sign of it is a deploy that fails after
+    building and pushing an image.
+
+    Real credentials are unaffected -- they live in Google Secret Manager and
+    are named by `--set-secrets`, which resolves them at runtime inside Cloud
+    Run and never passes them through GitHub.
+    """
+    if not DEPLOY.is_file():
+        pytest.skip("deploy.yml not present in this checkout")
+    text = DEPLOY.read_text(encoding="utf-8")
+    found = re.findall(r"\$\{\{\s*secrets\.([A-Za-z_][A-Za-z0-9_]*)", text)
+    assert not found, (
+        f"deploy.yml requires repository secrets that must be set by hand: "
+        f"{sorted(set(found))}. If one is a real credential it belongs in "
+        f"Secret Manager via --set-secrets; if it is an address, inline it."
+    )
+
+
+def test_the_auth_step_still_has_both_halves() -> None:
+    """Guards the test above from passing by deleting the auth instead.
+
+    Removing `${{ secrets.* }}` satisfies the previous assertion whether the
+    values were inlined or the authentication step was dropped, and only one
+    of those deploys anything.
+    """
+    if not DEPLOY.is_file():
+        pytest.skip("deploy.yml not present in this checkout")
+    yaml = pytest.importorskip("yaml")
+    doc = yaml.safe_load(DEPLOY.read_text(encoding="utf-8"))
+    env = doc.get("env") or {}
+    assert "workloadIdentityPools" in str(env.get("GCP_WIF_PROVIDER", "")), (
+        "no Workload Identity provider -- the deploy cannot authenticate to GCP"
+    )
+    assert str(env.get("GCP_SERVICE_ACCOUNT", "")).endswith(".iam.gserviceaccount.com"), (
+        "no service account to impersonate"
     )
 
 

@@ -19,6 +19,47 @@ permissions:
   contents: read
   id-token: write # for Google's keyless auth -- see below
 
+# ---------------------------------------------------------------------------
+# These are literals, deliberately, and not repository secrets.
+#
+# None of them is a credential. A project id, a region, a service-account
+# email, a bucket name and two public URLs are addresses; publishing an address
+# grants nobody anything. They were secrets in the first version of this file
+# out of habit, and the only thing that bought was ten values to paste into a
+# settings page before the first deploy could run -- a setup step that fails
+# late, silently, and only for whoever forgot one.
+#
+# The Workload Identity provider path is the one that looks alarming in a
+# public repo and is not. Its security is the attribute condition on the
+# provider itself:
+#
+#     assertion.repository == 'AshishJha14411/IntPrac'
+#
+# Only a GitHub OIDC token whose repository claim is exactly this repo can be
+# exchanged for Google credentials, and only workflows in this repo can mint
+# such a token. A fork's workflow presents its own repository name and is
+# refused. So the path is safe to read and useless to anyone else -- which is
+# the entire point of federation over a service-account JSON key.
+#
+# ⚠ If this repo is ever renamed or transferred, that condition stops matching
+# and every deploy fails at the auth step. Update it with:
+#     gcloud iam workload-identity-pools providers update-oidc intprac \
+#       --location=global --workload-identity-pool=github \
+#       --attribute-condition="assertion.repository=='NEW/NAME'"
+#
+# Real secrets -- the database password, the Gemini key, the OAuth client
+# secret -- are in Google Secret Manager and are read by Cloud Run at runtime.
+# They are never in this repository and never pass through GitHub.
+# ---------------------------------------------------------------------------
+env:
+  GCP_PROJECT: promptopia-428409-h3
+  GCP_REGION: asia-south1
+  GCP_SERVICE_ACCOUNT: interview-deployer@promptopia-428409-h3.iam.gserviceaccount.com
+  GCP_WIF_PROVIDER: projects/379068176383/locations/global/workloadIdentityPools/github/providers/intprac
+  GCS_BUCKET: intprac-uploads-379068176383
+  API_ORIGIN: https://interview-api-379068176383.asia-south1.run.app
+  FRONTEND_ORIGIN: https://int-prac.vercel.app
+
 jobs:
   backend:
     # `workflow_run` fires on failure too, so the result has to be checked.
@@ -26,26 +67,29 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    environment: production # gate approvals/secrets here, in the repo settings
+    environment: production # deployment history, and somewhere to add approvals
     steps:
       - uses: actions/checkout@v4
 
       # Keyless. Workload Identity Federation trades a short-lived GitHub OIDC
       # token for a Google one, so there is no long-lived service-account JSON
-      # in repo secrets to leak or rotate. It is more console setup once and
-      # less to worry about forever.
+      # to leak or rotate. It is more console setup once and less to worry
+      # about forever.
       - id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      # Workflow-level `env` is exported into every `run` block, so these are
+      # plain shell variables below -- no ${{ }} interpolation, which keeps the
+      # scripts runnable and readable as scripts.
       - name: Build and push
         run: |
-          gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
-          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT }}/interview/api:${{ github.sha }}"
+          gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+          IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/interview/api:${{ github.sha }}"
           docker build -t "$IMAGE" ./backend
           docker push "$IMAGE"
           echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
@@ -58,24 +102,24 @@ jobs:
       - name: Migrate
         run: |
           gcloud run jobs deploy interview-migrate \
-            --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
+            --image "$IMAGE" --region "$GCP_REGION" \
             --command alembic --args "upgrade,head" \
             --set-secrets "MIGRATION_DATABASE_URL=interview-migration-db-url:latest" \
             --max-retries 0 --quiet
           gcloud run jobs execute interview-migrate \
-            --region "${{ secrets.GCP_REGION }}" --wait --quiet
+            --region "$GCP_REGION" --wait --quiet
 
       # Seeding is idempotent (it validates the authoring bar, then upserts),
       # so it runs every deploy rather than being a thing someone remembers.
       - name: Seed the question bank
         run: |
           gcloud run jobs deploy interview-seed \
-            --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
+            --image "$IMAGE" --region "$GCP_REGION" \
             --command python --args "-m,app.content.seed" \
             --set-secrets "SYNC_DATABASE_URL=interview-sync-db-url:latest" \
             --max-retries 0 --quiet
           gcloud run jobs execute interview-seed \
-            --region "${{ secrets.GCP_REGION }}" --wait --quiet
+            --region "$GCP_REGION" --wait --quiet
 
       - name: Deploy the API
         run: |
@@ -88,8 +132,8 @@ jobs:
           # MinIO there is no separate in-cluster address to distinguish.
           COMMON_STORAGE="S3_ENDPOINT_URL=https://storage.googleapis.com"
           COMMON_STORAGE="$COMMON_STORAGE;S3_PUBLIC_ENDPOINT_URL=https://storage.googleapis.com"
-          COMMON_STORAGE="$COMMON_STORAGE;S3_BUCKET_UPLOADS=${{ secrets.GCS_BUCKET }}"
-          COMMON_STORAGE="$COMMON_STORAGE;S3_REGION=${{ secrets.GCP_REGION }}"
+          COMMON_STORAGE="$COMMON_STORAGE;S3_BUCKET_UPLOADS=$GCS_BUCKET"
+          COMMON_STORAGE="$COMMON_STORAGE;S3_REGION=$GCP_REGION"
           echo "COMMON_STORAGE=$COMMON_STORAGE" >> "$GITHUB_ENV"
 
           # `^;^` switches gcloud's list delimiter from comma to semicolon,
@@ -116,11 +160,11 @@ jobs:
           # sixteen a local Redis has, so compose's db-number split collapses
           # here; harmless while nothing publishes.
           gcloud run deploy interview-api \
-            --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
+            --image "$IMAGE" --region "$GCP_REGION" \
             --platform managed --allow-unauthenticated \
             --port 8080 --cpu 1 --memory 1Gi \
             --min-instances 0 --max-instances 3 \
-            --set-env-vars "^;^ENVIRONMENT=production;LOG_FORMAT=json;CELERY_TASK_ALWAYS_EAGER=true;CORS_ORIGINS=${{ secrets.FRONTEND_ORIGIN }};FRONTEND_BASE_URL=${{ secrets.FRONTEND_ORIGIN }};GOOGLE_REDIRECT_URI=${{ secrets.API_ORIGIN }}/api/v1/auth/google/callback;AUTH_COOKIE_SECURE=true;AUTH_COOKIE_SAMESITE=none;$COMMON_STORAGE" \
+            --set-env-vars "^;^ENVIRONMENT=production;LOG_FORMAT=json;CELERY_TASK_ALWAYS_EAGER=true;CORS_ORIGINS=$FRONTEND_ORIGIN;FRONTEND_BASE_URL=$FRONTEND_ORIGIN;GOOGLE_REDIRECT_URI=$API_ORIGIN/api/v1/auth/google/callback;AUTH_COOKIE_SECURE=true;AUTH_COOKIE_SAMESITE=none;$COMMON_STORAGE" \
             --set-secrets "DATABASE_URL=interview-db-url:latest,SYNC_DATABASE_URL=interview-sync-db-url:latest,MIGRATION_DATABASE_URL=interview-migration-db-url:latest,REDIS_URL=interview-redis-url:latest,CELERY_BROKER_URL=interview-redis-url:latest,CELERY_RESULT_BACKEND=interview-redis-url:latest,JWT_SECRET=interview-jwt-secret:latest,GEMINI_API_KEY=interview-gemini-key:latest,GOOGLE_CLIENT_ID=interview-google-client-id:latest,GOOGLE_CLIENT_SECRET=interview-google-client-secret:latest,S3_ACCESS_KEY_ID=interview-s3-key-id:latest,S3_SECRET_ACCESS_KEY=interview-s3-secret:latest" \
             --quiet
           # `min-instances 0` is the whole cost model (ADR 010): nothing is
@@ -142,33 +186,29 @@ jobs:
         run: |
           for job in retention drain; do
             gcloud run jobs deploy "interview-$job" \
-              --image "$IMAGE" --region "${{ secrets.GCP_REGION }}" \
+              --image "$IMAGE" --region "$GCP_REGION" \
               --command python --args "-m,app.entrypoints.jobs,$job" \
-              --set-env-vars "^;^ENVIRONMENT=production;LOG_FORMAT=json;CELERY_TASK_ALWAYS_EAGER=true;CORS_ORIGINS=${{ secrets.FRONTEND_ORIGIN }};$COMMON_STORAGE" \
+              --set-env-vars "^;^ENVIRONMENT=production;LOG_FORMAT=json;CELERY_TASK_ALWAYS_EAGER=true;CORS_ORIGINS=$FRONTEND_ORIGIN;$COMMON_STORAGE" \
               --set-secrets "DATABASE_URL=interview-db-url:latest,SYNC_DATABASE_URL=interview-sync-db-url:latest,REDIS_URL=interview-redis-url:latest,GEMINI_API_KEY=interview-gemini-key:latest,S3_ACCESS_KEY_ID=interview-s3-key-id:latest,S3_SECRET_ACCESS_KEY=interview-s3-secret:latest" \
               --max-retries 1 --task-timeout 15m --quiet
           done
 
       - name: Schedule them
         run: |
-          REGION="${{ secrets.GCP_REGION }}"
-          PROJECT="${{ secrets.GCP_PROJECT }}"
-          SA="${{ secrets.GCP_SERVICE_ACCOUNT }}"
-
           # `gcloud scheduler jobs create` is not idempotent -- it fails if the
           # job exists, which is every deploy after the first. describe-then-
           # branch keeps this step re-runnable, which a deploy step has to be.
           schedule() {
             name="$1"; cron="$2"; target="$3"
-            uri="https://$REGION-run.googleapis.com/apis/run.googleapis.com/v1"
-            uri="$uri/namespaces/$PROJECT/jobs/$target:run"
+            uri="https://$GCP_REGION-run.googleapis.com/apis/run.googleapis.com/v1"
+            uri="$uri/namespaces/$GCP_PROJECT/jobs/$target:run"
             verb=create
-            gcloud scheduler jobs describe "$name" --location="$REGION" \
+            gcloud scheduler jobs describe "$name" --location="$GCP_REGION" \
               --quiet >/dev/null 2>&1 && verb=update
             gcloud scheduler jobs "$verb" http "$name" \
-              --location="$REGION" --schedule="$cron" --time-zone="Etc/UTC" \
+              --location="$GCP_REGION" --schedule="$cron" --time-zone="Etc/UTC" \
               --uri="$uri" --http-method=POST \
-              --oauth-service-account-email="$SA" \
+              --oauth-service-account-email="$GCP_SERVICE_ACCOUNT" \
               --attempt-deadline=30m --quiet
           }
 
@@ -189,7 +229,7 @@ jobs:
       # the exact thing that was wrong in v1 for weeks with nobody noticing.
       - name: Verify the revision that is actually serving
         run: |
-          READY=$(curl -fsS "${{ secrets.API_ORIGIN }}/api/v1/health/ready")
+          READY=$(curl -fsS "$API_ORIGIN/api/v1/health/ready")
           echo "$READY"
           echo "$READY" | grep -q '"dispatch":"inline"' \
             || { echo "::error::deployed revision is not in workerless mode"; exit 1; }
@@ -201,43 +241,28 @@ jobs:
         run: |
           echo "::warning::routing traffic back to the previous revision"
           PREV=$(gcloud run revisions list --service interview-api \
-            --region "${{ secrets.GCP_REGION }}" --format="value(name)" \
+            --region "$GCP_REGION" --format="value(name)" \
             --sort-by="~metadata.creationTimestamp" | sed -n 2p)
           [ -n "$PREV" ] && gcloud run services update-traffic interview-api \
-            --region "${{ secrets.GCP_REGION }}" --to-revisions "$PREV=100" --quiet
+            --region "$GCP_REGION" --to-revisions "$PREV=100" --quiet
 
-  frontend:
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
-    needs: backend # the UI must never be newer than the API it calls
-    # That ordering is the reason `frontend/vercel.json` sets
-    # git.deploymentEnabled to false for main and dev. Vercel's Git
-    # integration would otherwise deploy on push, in parallel with this job and
-    # without waiting for the migration -- so a release that adds a column and
-    # the UI that reads it would race, and the UI would usually win. Turning
-    # the Git trigger off leaves exactly one path to production.
-    #
-    # To hand the frontend back to Vercel instead, delete that file and this
-    # job together. Do not keep both.
-    runs-on: ubuntu-latest
-    environment: production
-    defaults:
-      run: { working-directory: frontend }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
-      - run: npm ci --no-audit --no-fund
-      - run: npm i -g vercel@latest
-      - name: Deploy
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-        run: |
-          vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
-          # `npm run build` fetches the 40 MB Vosk model into public/models so
-          # the on-device recogniser is served from our own origin rather than
-          # a third-party CDN that could be down mid-interview (ADR 011).
-          vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
-          vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}"
+# ---------------------------------------------------------------------------
+# There is no frontend job here, on purpose.
+#
+# Vercel's own Git integration deploys the UI on push, which needs no token,
+# no org id and no project id stored in this repository -- three fewer things
+# to set up and keep valid. The job that used to live here existed only to
+# order the frontend behind the backend, so the UI could never be newer than
+# the API it calls.
+#
+# That ordering is worth less than it sounds for this app. Cloud Run keeps the
+# old revision serving until the new one passes its health check, and the
+# migrations run before either, so the window where a new UI meets an old API
+# is seconds. If a release ever does need strict ordering -- a column the UI
+# depends on -- deploy the backend first, wait for this workflow to go green,
+# then push the frontend change.
+#
+# NEXT_PUBLIC_API_BASE_URL is set in the Vercel project, not here: Next.js
+# compiles it into the bundle at build time, so it has to be present wherever
+# the build happens.
+# ---------------------------------------------------------------------------
