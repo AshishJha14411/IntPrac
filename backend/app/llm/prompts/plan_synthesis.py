@@ -57,85 +57,104 @@ MAX_CONCEPTS_PER_QUESTION = 4
 #: The thresholds are interpolated from ``content.types`` rather than typed
 #: out, so the example cannot drift from the gate that judges the real thing.
 _EXAMPLE = f"""\
+ASK ABOUT MECHANISM, NOT PROCESS. The test of a good question: could someone
+who merely *attended* the project answer it? If yes, it is a project summary
+and you have wasted the slot.
+
+  Weak:   "Walk me through how you planned that dive."
+  Strong: "He surfaced exactly on schedule and still took a hit. Why?"
+
+The weak one asks what happened. The strong one cannot be answered without the
+mechanism, and a wrong mental model produces a visibly wrong answer. Prefer
+"why does that happen", "what is actually going on when", "what breaks if" over
+"how did you approach".
+
+Use the specific tools, limits, APIs and versions named in the CV. If it says
+Batch Apex, ask what actually goes wrong inside Batch Apex at scale -- not how
+they "approached batch processing". Their nouns are the whole point; a question
+that would work for anyone in that job title is too generic.
+
 Here is one complete question, for a fictional commercial diving supervisor.
 Match this shape. Your questions will be about a different job entirely.
 
 {{
-  "competency_id": "gas-supply-contingency",
-  "competency_label": "Planning for gas supply failure",
-  "prompt": "You mentioned running surface-supplied dives to 40 metres off the \
-Aberdeen platforms. Talk me through what happens the moment the primary \
-umbilical supply fails, and how the dive was set up so that moment is \
-survivable.",
-  "neutral_wording": "A diver is working at depth on a surface-supplied \
-system when the primary breathing gas supply fails. What has to already be \
-true for that diver to get home, and what happens next?",
+  "competency_id": "repetitive-dive-loading",
+  "competency_label": "Residual gas on repeat dives",
+  "prompt": "You mentioned running two working dives a day to 30 metres off \
+the Aberdeen platforms. Say the second diver comes up bang on the table, no \
+missed stops, and still takes a hit in the shoulder an hour later. What is \
+going on in his body that the table did not account for?",
+  "neutral_wording": "A diver completes a second dive of the day, follows the \
+decompression schedule exactly, misses no stops, and still develops symptoms \
+after surfacing. What is happening physiologically, and why did the schedule \
+not prevent it?",
   "concepts": [
     {{
-      "concept_id": "bailout-sized-for-the-worst-ascent",
-      "label": "The emergency supply has to be sized for the longest ascent \
-that diver could actually need, not the planned one.",
+      "concept_id": "tissue-does-not-reset-at-surface",
+      "label": "He did not start the second dive empty -- there is still gas \
+dissolved in him from the first one.",
       "weight": "core",
-      "why_it_matters": "A bailout sized for the planned profile runs out \
-during the one ascent that is not planned, which is the only time it is used.",
+      "why_it_matters": "Treating each dive as if it starts from zero is the \
+single most common way a diver who followed the numbers still gets bent.",
       "acceptable_signals": [
-        "you work out the worst case swim back plus the stops and then carry \
-more than that",
-        "the bottle has to cover getting out of the structure too, not just \
-straight up",
-        "if he is inside something the clock starts when he gets clear, not \
-when the gas goes"
+        "he is still carrying gas from the morning dive, so he starts the \
+second one part loaded",
+        "the surface interval was not long enough to blow off what he took on \
+earlier",
+        "you have to run it as a repetitive dive, not as a fresh one"
       ],
       "common_misconceptions": [
-        "the bailout only needs to cover a direct ascent from working depth"
+        "once you are back on deck and breathing air you are clean again"
       ],
-      "signpost": "Think about where the diver physically is when it fails, \
-not just how deep."
+      "signpost": "Think about what he was carrying before he even got in the \
+water the second time."
     }},
     {{
-      "concept_id": "standby-diver-actually-ready",
-      "label": "A standby diver is only real if they can be in the water \
-inside the time the emergency supply buys you.",
+      "concept_id": "compartments-load-at-different-rates",
+      "label": "Different tissues take gas on and give it back at very \
+different speeds, so which one is limiting changes with the profile.",
       "weight": "core",
-      "why_it_matters": "A standby who is dressed but not ready converts a \
-recoverable failure into a fatality, and the paperwork will still say one was \
-posted.",
+      "why_it_matters": "A short deep dive and a long shallow one stress \
+completely different tissue, which is why one schedule cannot be read as \
+'safe' in general.",
       "acceptable_signals": [
-        "he is sat there kitted with his hat next to him, not getting dressed \
-when the alarm goes",
-        "you time it, because if it takes four minutes and the bottle is three \
-you have nothing",
-        "somebody is watching the panel whose only job is that"
+        "the fast stuff like blood fills and empties quickly, the slow stuff \
+like joints and fat takes hours",
+        "a quick bounce loads different tissue than sitting at twenty metres \
+all afternoon",
+        "the bit that is limiting you is not the same one on every dive"
       ],
       "common_misconceptions": [
-        "having a second diver on the vessel counts as having a standby"
+        "the body off-gasses at one steady rate you can just wait out"
       ],
-      "signpost": "What would you actually measure to know the standby is \
-worth having?"
+      "signpost": "Why would the shoulder be the thing that hurts, and not \
+something else?"
     }}
   ],
   "followups": [
     {{
-      "prompt": "Say he is thirty metres inside the structure when it happens. \
-Does anything about your answer change?",
-      "targets_concept_id": "bailout-sized-for-the-worst-ascent"
+      "prompt": "He flew home the next morning. Does that change anything?",
+      "targets_concept_id": "compartments-load-at-different-rates"
     }}
   ],
   "goldens": [
-    {{"label": "strong", "transcript": "You size the bailout off the worst \
-case, so time to get clear of the structure plus the swim plus any stops, and \
-you carry margin on top. The standby is dressed in and timed so he is in the \
-water inside that window, and one person on the panel does nothing but \
-watch."}},
-    {{"label": "weak", "transcript": "We always carry a bailout bottle and \
-there is a standby diver on deck as required by the regulations, so if the \
-supply fails he switches to bailout and comes up."}}
+    {{"label": "strong", "transcript": "He was not clean when he went back \
+down -- there is still gas in him from the morning, and the surface interval \
+was not long enough to clear it, so the table has to be run as a repetitive \
+dive. And it does not come out evenly: blood clears fast, the slow tissue like \
+joints holds onto it for hours, which is why it shows up in the shoulder \
+rather than straight away."}},
+    {{"label": "weak", "transcript": "If he followed the table exactly then it \
+should not have happened -- the tables have a safety margin built in. Probably \
+he was dehydrated or ascended a bit fast near the surface without noticing."}}
   ]
 }}
 
-Notice: the signals are what someone *says*, never the terminology. The
-`neutral_wording` mentions no employer and no platform, because the grader sees
-only that and the answer. The follow-up pushes on the gap without naming it.
+Notice: the signals are what someone *says*, never the terminology -- "the \
+slow stuff like joints and fat takes hours", never "slow tissue compartments".
+The `neutral_wording` names no employer and no platform, because the grader
+sees only that and the answer. The follow-up opens a new consequence rather
+than restating the question.
 
 Every question needs at least {MIN_CORE_CONCEPTS} concepts marked "core" --
 "core" means the answer is incomplete without it, and there is always more than
