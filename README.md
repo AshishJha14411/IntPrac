@@ -152,6 +152,71 @@ signal, and a strong + weak golden answer.
 
 ---
 
+## What it costs, measured
+
+Cost is a design constraint here, not a dashboard metric (§8.3) — this is
+self-funded, so a session that costs a rupee is a different product from one
+that costs ten. Every model call writes a `UsageCost` row, so the numbers below
+are read out of `usage_costs`, not estimated.
+
+**Two things dominate, and only one of them is per-interview.**
+
+| | what it is | cost | when you pay it |
+|---|---|---|---|
+| Authoring | one call writes the whole interview from the CV | **$0.0134** for 6 questions, **$0.030** for 11 | once per topic, then cached forever |
+| Grading | one call per submitted answer | **$0.00157** | every answer, every time |
+| Planning follow-ups | lexical overlap, no model | **$0** | — |
+
+Measured over 10 authoring calls and 20 graded answers. A 6-question session in
+a brand-new profession costs about **$0.023**; the same session once those
+topics are cached costs **$0.0094**, because only the grading is left.
+
+**Output tokens are 93% of the bill.** Input is nearly free by comparison
+($0.0027 of $0.1340 on authoring). That single fact drove every decision below —
+optimising a prompt's length is rearranging 7% of the problem.
+
+### Grading: measured, not assumed
+
+`scripts/grader_bench.py` grades the bank's own golden answers, which ship with
+the verdicts a correct grader must produce, across models and thinking levels:
+
+| model | thinking | agreement | $/grade |
+|---|---|---|---|
+| flash | high | 96% | $0.02147 |
+| flash | low | 99% | $0.00621 |
+| flash-lite | low | 96% | $0.00150 |
+| **flash-lite** | **minimal** | **97%** | **$0.00155** |
+
+More thinking did not buy accuracy, and it cannot: **grading is closed-book.**
+The rubric names the concepts, the signals say what counts as reaching one, and
+a JSON schema fixes the shape — so the reasoning being paid for was re-deriving
+what the prompt already contained. Choosing the bottom row is a **14× saving at
+one point of agreement**, and the live average of $0.00157 across 20 real
+answers matches the bench.
+
+### Authoring: one call, then never again
+
+Planning used to cost one reduction call plus one generation call per missing
+competency, each re-sending the whole instruction block. It is now a single call
+that writes every question, rubric and follow-up together — and what it writes
+is persisted as a `generated=True` bank question. The second candidate on that
+topic pays nothing, so **a whole new profession costs about ten cents, once.**
+
+That is also why self-hosting a model would cost *more*, not less: a Cloud Run
+L4 GPU is ~$0.71/hour whether or not anyone interviews, and 8B CPU inference
+runs 1–5 tok/s, so a single rubric would take 5–25 minutes at plan time.
+
+### What these numbers cannot tell you
+
+`usage_costs.kind` records only *input* vs *output* tokens, not which call they
+came from. The split above works because authoring is deliberately recorded with
+a null `session_id` — the rubric outlives the interview — while grading carries
+one. That is a real signal but an incidental one: a third kind of call recorded
+without a session would land in the "authoring" bucket and nobody would notice.
+A purpose column is the fix, and it is not written yet.
+
+---
+
 ## Layout
 
 ```
