@@ -3,6 +3,12 @@
 Read `REQUIREMENTS_SPEC.md` §1.2 before touching anything that produces a
 score. The rest of this file assumes you have.
 
+That file is **gitignored and local only** — it is a working document, not part
+of what this repository publishes, so it will not be in a fresh clone. The
+scoring boundary it describes is restated in the README and enforced by
+[`tests/unit/test_score_invariance.py`](backend/tests/unit/test_score_invariance.py),
+which is the copy that cannot go stale.
+
 ## Commands
 
 ```bash

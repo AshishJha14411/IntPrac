@@ -13,7 +13,6 @@ differently. See [ADR 011](docs/adr/011-voice-in-the-browser.md) — the whole
 pipeline runs client-side, so it costs nothing and this app never stores a byte
 of audio.
 
-Full requirements: [`REQUIREMENTS_SPEC.md`](REQUIREMENTS_SPEC.md).
 Design decisions and their rejections: [`docs/adr/`](docs/adr/).
 
 ---

@@ -49,3 +49,11 @@ celerybeat.pid
 # `vercel link` writes .vercel/project.json (org and project ids) and
 # `vercel build` writes .vercel/output, which is the whole built site.
 .vercel/
+
+# --- local development notes, deliberately not published ---
+# The spec and the handoff note are working documents for whoever is building
+# this, not part of the artifact. PROJECT_STATE in particular names which
+# credentials are awaiting rotation, which is a hint worth nothing to a
+# collaborator and something to an attacker.
+REQUIREMENTS_SPEC.md
+docs/PROJECT_STATE.md
