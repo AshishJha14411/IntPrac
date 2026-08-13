@@ -1,3 +1,14 @@
+import { Card, GlowCard, GradientCard } from "@/components/ui/card";
+import {
+  Badge,
+  Meter,
+  Notice,
+  SectionHeading,
+  VerdictChip,
+  verdictBar,
+} from "@/components/ui/feedback";
+import { Shell } from "@/components/ui/shell";
+import { cn } from "@/lib/cn";
 import type { ConceptLine, SessionReport } from "@/lib/types";
 import { RefreshWhilePending } from "./RefreshWhilePending";
 
@@ -29,151 +40,255 @@ export function ReportBody({ report }: { report: SessionReport }) {
   const pct = (value: number) => `${Math.round(value * 100)}%`;
 
   return (
-    <div className="shell wide">
-      <h1>Your report</h1>
-      <p className="muted">
-        {report.mode} mode · {report.seniority} level · {report.graded_questions} of{" "}
-        {report.graded_questions + report.pending_questions} questions graded
-      </p>
+    <Shell width="wide">
+      <header className="relative isolate mb-8">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -top-28 left-1/3 -z-10 h-64 w-[30rem] rounded-full bg-bloom-1 blur-[120px]"
+        />
+        <h1 className="text-gradient text-3xl font-semibold tracking-tight sm:text-4xl">
+          Your report
+        </h1>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Badge>{report.mode} mode</Badge>
+          <Badge>{report.seniority} level</Badge>
+          <Badge>
+            {report.graded_questions} of {report.graded_questions + report.pending_questions}{" "}
+            questions graded
+          </Badge>
+        </div>
+      </header>
 
       {report.pending_questions > 0 && (
         <>
-          <div className="notice" role="status">
-            {report.pending_questions} answer(s) are still being graded. Grading runs after the
-            session so it never slows the interview down.
-          </div>
+          <Notice role="status" tone="accent" className="mb-6">
+            <span className="flex items-center gap-2.5">
+              <span
+                aria-hidden="true"
+                className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent-soft"
+              />
+              {report.pending_questions} answer(s) are still being graded. Grading runs after the
+              session so it never slows the interview down.
+            </span>
+          </Notice>
           <RefreshWhilePending />
         </>
       )}
 
       {/* ── overall ───────────────────────────────────────────────────── */}
-      <div className="card">
-        <h2 style={{ marginTop: 0 }}>Overall</h2>
-        <p style={{ fontSize: "1.3rem", margin: "0 0 6px" }}>
-          <strong style={{ textTransform: "capitalize" }}>{report.recommendation}</strong>
-        </p>
-        <p className="small muted">
-          Raw {pct(report.overall_raw)} · after accounting for hints{" "}
-          {pct(report.overall_hint_adjusted)}. Both are shown because hiding either would be
-          dishonest: one hides the help, the other hides the penalty.
-        </p>
-      </div>
+      <GradientCard>
+        <div className="p-7 sm:p-8">
+          <p className="text-xs tracking-[0.18em] text-faint uppercase">Overall</p>
+          <p className="text-gradient-accent mt-2 text-3xl font-semibold tracking-tight capitalize sm:text-4xl">
+            {report.recommendation}
+          </p>
+
+          <dl className="mt-6 grid gap-5 sm:grid-cols-2">
+            <ScoreReadout label="Raw" value={report.overall_raw} format={pct} />
+            <ScoreReadout
+              label="After accounting for hints"
+              value={report.overall_hint_adjusted}
+              format={pct}
+            />
+          </dl>
+
+          <p className="mt-5 text-xs leading-relaxed text-faint">
+            Both are shown because hiding either would be dishonest: one hides the help, the other
+            hides the penalty.
+          </p>
+        </div>
+      </GradientCard>
 
       {/* ── per competency ────────────────────────────────────────────── */}
       {report.competencies.length > 0 && (
         <>
-          <h2>By competency</h2>
-          <div className="card" style={{ overflowX: "auto" }}>
-            <table>
+          <SectionHeading>By competency</SectionHeading>
+          <Card className="overflow-x-auto">
+            <table className="w-full min-w-[34rem] border-collapse text-sm">
               <thead>
-                <tr>
-                  <th scope="col">Competency</th>
-                  <th scope="col">Band</th>
-                  <th scope="col">What that band means</th>
+                <tr className="border-b border-line-soft">
+                  <th
+                    scope="col"
+                    className="px-5 py-3 text-left text-[0.7rem] font-medium tracking-wider text-faint uppercase"
+                  >
+                    Competency
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-5 py-3 text-left text-[0.7rem] font-medium tracking-wider text-faint uppercase"
+                  >
+                    Band
+                  </th>
+                  <th
+                    scope="col"
+                    className="px-5 py-3 text-left text-[0.7rem] font-medium tracking-wider text-faint uppercase"
+                  >
+                    What that band means
+                  </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-line-soft">
                 {report.competencies.map((rollup) => (
-                  <tr key={rollup.competency_id}>
-                    <td>
-                      <code>{rollup.competency_id}</code>
+                  <tr key={rollup.competency_id} className="transition-colors hover:bg-glass-2">
+                    <td className="px-5 py-3.5 align-top">
+                      <code className="font-mono text-xs text-accent-soft">
+                        {rollup.competency_id}
+                      </code>
                     </td>
-                    <td>
-                      <strong>{rollup.band}</strong>
-                      <span className="muted">/5</span>
+                    <td className="px-5 py-3.5 align-top whitespace-nowrap">
+                      <span className="font-semibold text-ink">{rollup.band}</span>
+                      <span className="text-faint">/5</span>
                     </td>
-                    <td className="small muted">{rollup.band_anchor}</td>
+                    <td className="px-5 py-3.5 align-top text-xs leading-relaxed text-muted">
+                      {rollup.band_anchor}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </Card>
         </>
       )}
 
       {/* ── the three things to work on ───────────────────────────────── */}
       {report.top_improvements.length > 0 && (
         <>
-          <h2>The three highest-leverage things to work on</h2>
-          {report.top_improvements.map((item, index) => (
-            <div className="card" key={index}>
-              <p className="small muted" style={{ margin: 0 }}>
-                <code>{item.competency_id}</code>
-              </p>
-              <p style={{ margin: "6px 0" }}>
-                <strong>{item.concept}</strong>
-              </p>
-              <p className="small" style={{ margin: "0 0 6px" }}>
-                <span className="muted">Why this matters in a real interview: </span>
-                {item.why_it_matters}
-              </p>
-              <p className="small" style={{ margin: 0 }}>
-                <span className="muted">What to add: </span>
-                {item.what_to_add}
-              </p>
-            </div>
-          ))}
+          <SectionHeading>The three highest-leverage things to work on</SectionHeading>
+          <div className="grid gap-4 md:grid-cols-3">
+            {report.top_improvements.map((item, index) => (
+              <GlowCard key={index} className="h-full p-6" glow="var(--color-glow-cool)">
+                <div className="flex items-center justify-between gap-2">
+                  <Badge tone="mono">{item.competency_id}</Badge>
+                  <span className="font-mono text-xs text-faint">0{index + 1}</span>
+                </div>
+                <p className="mt-3 text-sm font-semibold text-ink">{item.concept}</p>
+                <p className="mt-3 text-xs leading-relaxed text-muted">
+                  <span className="text-faint">Why this matters in a real interview: </span>
+                  {item.why_it_matters}
+                </p>
+                <p className="mt-2 text-xs leading-relaxed text-muted">
+                  <span className="text-faint">What to add: </span>
+                  {item.what_to_add}
+                </p>
+              </GlowCard>
+            ))}
+          </div>
         </>
       )}
 
       {/* ── question by question ──────────────────────────────────────── */}
-      <h2>Question by question</h2>
-      {report.questions.map((question) => (
-        <div className="card" key={question.question_id}>
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="small muted mono">{question.competency_id}</span>
-            <span className="small muted">
-              {question.band === null ? (
-                question.status === "skipped" ? (
-                  "Skipped"
+      <SectionHeading>Question by question</SectionHeading>
+      <div className="space-y-4">
+        {report.questions.map((question) => (
+          <Card key={question.question_id} className="p-6 sm:p-7">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <Badge tone="mono">{question.competency_id}</Badge>
+              <span className="text-xs text-muted">
+                {question.band === null ? (
+                  question.status === "skipped" ? (
+                    "Skipped"
+                  ) : (
+                    "Grading…"
+                  )
                 ) : (
-                  "Grading…"
-                )
-              ) : (
-                <>
-                  Band <strong>{question.band}</strong>/5
-                  {question.hints_used > 0 && ` · ${question.hints_used} hint(s) used`}
-                </>
-              )}
-            </span>
-          </div>
-
-          <p style={{ fontSize: "1.05rem", marginTop: 10 }}>{question.prompt}</p>
-
-          {question.transcript && (
-            <details>
-              <summary className="small muted" style={{ cursor: "pointer" }}>
-                What you said
-              </summary>
-              <blockquote>{question.transcript}</blockquote>
-            </details>
-          )}
-
-          {question.unsubstantiated_claim && (
-            <div className="notice small" style={{ margin: "12px 0" }}>
-              This topic came from something on your resume, and none of the core concepts came
-              through. That&rsquo;s a fact with its evidence attached, not a judgement — it is
-              exactly the gap worth closing before a real interview.
+                  <>
+                    Band <strong className="font-semibold text-ink">{question.band}</strong>
+                    <span className="text-faint">/5</span>
+                    {question.hints_used > 0 && ` · ${question.hints_used} hint(s) used`}
+                  </>
+                )}
+              </span>
             </div>
-          )}
 
-          <ConceptGroup title="Covered" lines={question.covered} />
-          <ConceptGroup title="Partly there" lines={question.partial} />
-          <ConceptGroup title="Missed" lines={question.missed} />
+            {question.band !== null && (
+              <Meter
+                percent={(question.band / 5) * 100}
+                valueNow={question.band}
+                valueMin={0}
+                valueMax={5}
+                ariaLabel={`${question.competency_id} band`}
+                className="mt-3"
+              />
+            )}
 
-          {question.terminology_notes.length > 0 && (
-            <p className="small muted" style={{ marginTop: 12 }}>
-              <strong>Terminology note (zero weight):</strong>{" "}
-              {question.terminology_notes.join(" ")}
+            <p className="mt-4 text-base leading-relaxed text-ink text-pretty">
+              {question.prompt}
             </p>
-          )}
-        </div>
-      ))}
 
-      <p className="small muted" style={{ marginTop: 32 }}>
-        Session cost: ${report.cost_usd.toFixed(4)}. Shown because a session whose cost is
-        unknown is a bug.
+            {question.transcript && (
+              <details className="group mt-4">
+                <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md text-xs text-muted transition-colors hover:text-ink">
+                  <svg
+                    aria-hidden="true"
+                    viewBox="0 0 20 20"
+                    className="h-3.5 w-3.5 transition-transform group-open:rotate-90"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.75"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="m7.5 5 5 5-5 5" />
+                  </svg>
+                  What you said
+                </summary>
+                <blockquote className="mt-3 border-l-2 border-line-strong pl-4 text-sm leading-relaxed text-muted italic">
+                  {question.transcript}
+                </blockquote>
+              </details>
+            )}
+
+            {question.unsubstantiated_claim && (
+              <Notice className="mt-4 text-[0.8125rem]">
+                This topic came from something on your resume, and none of the core concepts came
+                through. That&rsquo;s a fact with its evidence attached, not a judgement — it is
+                exactly the gap worth closing before a real interview.
+              </Notice>
+            )}
+
+            <ConceptGroup title="Covered" lines={question.covered} />
+            <ConceptGroup title="Partly there" lines={question.partial} />
+            <ConceptGroup title="Missed" lines={question.missed} />
+
+            {question.terminology_notes.length > 0 && (
+              <p className="mt-5 rounded-lg border border-line-soft bg-glass-2 p-3 text-xs leading-relaxed text-muted">
+                <strong className="font-semibold text-ink">
+                  Terminology note (zero weight):
+                </strong>{" "}
+                {question.terminology_notes.join(" ")}
+              </p>
+            )}
+          </Card>
+        ))}
+      </div>
+
+      <p className="mt-10 text-xs text-faint">
+        Session cost: ${report.cost_usd.toFixed(4)}. Shown because a session whose cost is unknown
+        is a bug.
       </p>
+    </Shell>
+  );
+}
+
+function ScoreReadout({
+  label,
+  value,
+  format,
+}: {
+  label: string;
+  value: number;
+  format: (value: number) => string;
+}) {
+  return (
+    <div>
+      <dt className="text-xs text-muted">{label}</dt>
+      <dd className="mt-1 font-mono text-xl text-ink">{format(value)}</dd>
+      <Meter
+        percent={value * 100}
+        valueNow={Math.round(value * 100)}
+        ariaLabel={label}
+        className="mt-2"
+      />
     </div>
   );
 }
@@ -181,52 +296,51 @@ export function ReportBody({ report }: { report: SessionReport }) {
 function ConceptGroup({ title, lines }: { title: string; lines: ConceptLine[] }) {
   if (lines.length === 0) return null;
   return (
-    <section style={{ marginTop: 16 }}>
-      <h3 style={{ margin: "0 0 4px" }}>
-        {title} <span className="muted small">({lines.length})</span>
+    <section className="mt-6">
+      <h3 className="mb-3 text-sm font-semibold text-ink">
+        {title} <span className="font-normal text-faint">({lines.length})</span>
       </h3>
-      {lines.map((line) => (
-        <div className={`concept ${line.verdict}`} key={line.concept_id}>
-          <div className="row" style={{ gap: 8 }}>
-            <VerdictChip verdict={line.verdict} />
-            {line.weight === "core" && (
-              <span className="small muted">core concept</span>
+      <div className="space-y-3">
+        {lines.map((line) => (
+          <div
+            key={line.concept_id}
+            className="relative rounded-xl border border-line-soft bg-glass-2 p-4 pl-5"
+          >
+            {/* The bar repeats the chip's hue, and the chip repeats the word.
+                Neither is load-bearing on its own (NFR-A). A real element and
+                not a `before:` pseudo, because the class would have to be
+                interpolated and Tailwind cannot see a class it did not read
+                in the source. */}
+            <span
+              aria-hidden="true"
+              className={cn(
+                "absolute inset-y-3 left-0 w-0.5 rounded-full",
+                verdictBar(line.verdict),
+              )}
+            />
+            <div className="flex flex-wrap items-center gap-2">
+              <VerdictChip verdict={line.verdict} />
+              {line.weight === "core" && <span className="text-xs text-faint">core concept</span>}
+              {line.hint_discounted && (
+                <span className="text-xs text-partial">credit reduced — a hint pointed here</span>
+              )}
+            </div>
+            <p className="mt-2.5 text-sm text-ink">{line.label}</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted">{line.why_it_matters}</p>
+            {line.evidence_quote && (
+              <blockquote className="mt-2.5 border-l-2 border-line pl-3 text-xs text-muted italic">
+                &ldquo;{line.evidence_quote}&rdquo;
+              </blockquote>
             )}
-            {line.hint_discounted && (
-              <span className="small muted">credit reduced — a hint pointed here</span>
+            {line.improvement_note && (
+              <p className="mt-2.5 text-xs leading-relaxed text-muted">
+                <span className="text-faint">What to add: </span>
+                {line.improvement_note}
+              </p>
             )}
           </div>
-          <p style={{ margin: "8px 0 4px" }}>{line.label}</p>
-          <p className="small muted" style={{ margin: "0 0 6px" }}>
-            {line.why_it_matters}
-          </p>
-          {line.evidence_quote && (
-            <blockquote className="small">&ldquo;{line.evidence_quote}&rdquo;</blockquote>
-          )}
-          {line.improvement_note && (
-            <p className="small" style={{ margin: "6px 0 0" }}>
-              <span className="muted">What to add: </span>
-              {line.improvement_note}
-            </p>
-          )}
-        </div>
-      ))}
+        ))}
+      </div>
     </section>
-  );
-}
-
-/** Never colour alone (NFR-A): each chip carries a glyph and a word too. */
-function VerdictChip({ verdict }: { verdict: ConceptLine["verdict"] }) {
-  const glyph = {
-    covered: "✓",
-    partial: "◐",
-    missing: "○",
-    contradicted: "✕",
-  }[verdict];
-  return (
-    <span className={`chip ${verdict}`}>
-      <span aria-hidden="true">{glyph}</span>
-      {verdict}
-    </span>
   );
 }

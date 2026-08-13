@@ -1,15 +1,28 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Lightbulb, Mic, Square, Volume2, VolumeX } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button, LinkButton } from "@/components/ui/button";
+import { Card, GlowCard, GradientCard } from "@/components/ui/card";
+import { Badge, ErrorNote, Meter, Notice } from "@/components/ui/feedback";
+import { CheckField, Label, Textarea } from "@/components/ui/field";
+import { Segmented } from "@/components/ui/segmented";
+import { PageHeader, Shell } from "@/components/ui/shell";
 import { useDictation } from "@/hooks/useDictation";
 import { useSpeechSynthesis } from "@/hooks/useSpeechSynthesis";
 import { ApiError, api, newIdempotencyKey } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { LOW_CONFIDENCE, type TranscriptSegment } from "@/lib/speech";
 import type { AnswerResult, Hint, SessionPlan, Turn } from "@/lib/types";
 
 type Mode = "voice" | "text";
+
+const ANSWER_MODES = [
+  { value: "voice" as const, label: "Speak" },
+  { value: "text" as const, label: "Type" },
+];
 
 /**
  * The interview room.
@@ -202,18 +215,24 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
     speak(currentPrompt);
   }, [currentPrompt, mode, muted, inProgress, speak]);
 
-  if (plan.isLoading) return <div className="shell">Loading…</div>;
+  if (plan.isLoading) {
+    return (
+      <Shell>
+        <p className="animate-pulse text-sm text-muted">Loading…</p>
+      </Shell>
+    );
+  }
 
   if (plan.isError) {
     const error = plan.error as ApiError;
     return (
-      <div className="shell">
-        <p className="error" role="alert">
+      <Shell>
+        <ErrorNote role="alert">
           {error.code === "authentication-required"
             ? "Please sign in to continue."
             : error.message}
-        </p>
-      </div>
+        </ErrorNote>
+      </Shell>
     );
   }
 
@@ -221,152 +240,174 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
   if (status === "consent_pending" || status === "planned" || status === "device_check") {
     const allAccepted = consent.ai && consent.recording && consent.retention;
     return (
-      <div className="shell">
-        <h1>Before you start</h1>
-        <div className="card stack">
-          <p>
-            <strong>An AI conducts and assesses this interview.</strong> A human is not watching
-            it live.
-          </p>
-          <p>
-            <strong>What is scored:</strong> whether your explanation of the mechanism is
-            correct, how deep it goes, whether you ground it in specifics, and whether it is
-            followable.
-          </p>
-          <p>
-            <strong>What is never scored:</strong> your accent, fluency, grammar, speaking speed,
-            confidence, or anything inferred from your face or voice. Terminology carries zero
-            weight — the right idea in the wrong words is full credit.
-          </p>
-          <p>
-            <strong>What is recorded:</strong> the transcript, whether you type it or speak it.
-            This app stores and uploads <strong>no audio and no video</strong>.
-            {speech.engine === "native" ? (
-              <>
-                {" "}
-                Speaking uses your browser&rsquo;s built-in recognition, and some browsers —
-                Chrome and Edge among them — send that audio to the browser vendor to
-                transcribe it. Keeping it on this device, or typing, both avoid that and are
-                scored identically.
-              </>
-            ) : (
-              <>
-                {" "}
-                Speaking runs a speech model <strong>on this device</strong>, so your audio
-                does not leave your machine at all.
-              </>
-            )}
-          </p>
-          <p className="muted small">
-            Kept for up to <strong>6 months</strong>, then deleted automatically &mdash; transcripts
-            included, not just files. You can delete this session, or your whole account, at
-            any time from <a href="/dashboard">My interviews</a>.
-          </p>
+      <Shell>
+        <PageHeader eyebrow="Before you start" title="What this session does with your words" />
 
-          <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-            <legend className="visually-hidden">Consent</legend>
-            {(
-              [
-                ["ai", "I understand an AI conducts and assesses this interview."],
-                ["recording", "I consent to my transcript being recorded."],
-                ["retention", "I understand the retention period and how to delete my data."],
-              ] as const
-            ).map(([key, label]) => (
-              <label key={key} className="row" style={{ fontWeight: 400, marginBottom: 10 }}>
-                <input
-                  type="checkbox"
-                  style={{ width: "auto" }}
-                  checked={consent[key]}
-                  onChange={(event) =>
-                    setConsent((current) => ({ ...current, [key]: event.target.checked }))
-                  }
-                />
-                <span>{label}</span>
-              </label>
-            ))}
-          </fieldset>
+        <GradientCard className="mb-6">
+          <div className="space-y-4 p-6 sm:p-7">
+            <Disclosure heading="An AI conducts and assesses this interview.">
+              A human is not watching it live.
+            </Disclosure>
+            <Disclosure heading="What is scored:">
+              Whether your explanation of the mechanism is correct, how deep it goes, whether you
+              ground it in specifics, and whether it is followable.
+            </Disclosure>
+            <Disclosure heading="What is never scored:">
+              Your accent, fluency, grammar, speaking speed, confidence, or anything inferred from
+              your face or voice. Terminology carries zero weight — the right idea in the wrong
+              words is full credit.
+            </Disclosure>
+            <Disclosure heading="What is recorded:">
+              The transcript, whether you type it or speak it. This app stores and uploads{" "}
+              <strong className="font-semibold text-ink">no audio and no video</strong>.
+              {speech.engine === "native" ? (
+                <>
+                  {" "}
+                  Speaking uses your browser&rsquo;s built-in recognition, and some browsers —
+                  Chrome and Edge among them — send that audio to the browser vendor to transcribe
+                  it. Keeping it on this device, or typing, both avoid that and are scored
+                  identically.
+                </>
+              ) : (
+                <>
+                  {" "}
+                  Speaking runs a speech model{" "}
+                  <strong className="font-semibold text-ink">on this device</strong>, so your audio
+                  does not leave your machine at all.
+                </>
+              )}
+            </Disclosure>
 
-          <button
-            disabled={!allAccepted || giveConsent.isPending || start.isPending}
-            onClick={() => giveConsent.mutate()}
-          >
-            {giveConsent.isPending || start.isPending ? "Starting…" : "I agree — start"}
-          </button>
-          {!allAccepted && (
-            <p className="small muted">
-              All three are required. Without consent there is no session — that is deliberate.
+            <p className="text-xs leading-relaxed text-faint">
+              Kept for up to <strong className="font-medium text-muted">6 months</strong>, then
+              deleted automatically &mdash; transcripts included, not just files. You can delete
+              this session, or your whole account, at any time from{" "}
+              <a href="/dashboard" className="text-accent-soft underline underline-offset-4">
+                My interviews
+              </a>
+              .
             </p>
-          )}
-        </div>
 
-        <h2>How you&rsquo;ll answer</h2>
-        <div className="card stack">
-          <p style={{ margin: 0 }}>
-            Answers are <strong>spoken by default</strong>, the way an interview actually works.
-            You can switch to typing at any point during the session, including mid-answer, and
-            it is scored exactly the same — only the transcript is graded.
+            <fieldset className="space-y-2.5 border-0 p-0">
+              <legend className="sr-only">Consent</legend>
+              {(
+                [
+                  ["ai", "I understand an AI conducts and assesses this interview."],
+                  ["recording", "I consent to my transcript being recorded."],
+                  ["retention", "I understand the retention period and how to delete my data."],
+                ] as const
+              ).map(([key, label]) => (
+                <CheckField
+                  key={key}
+                  checked={consent[key]}
+                  onChange={(next) => setConsent((current) => ({ ...current, [key]: next }))}
+                >
+                  {label}
+                </CheckField>
+              ))}
+            </fieldset>
+
+            <Button
+              size="lg"
+              className="w-full"
+              disabled={!allAccepted || giveConsent.isPending || start.isPending}
+              onClick={() => giveConsent.mutate()}
+            >
+              {giveConsent.isPending || start.isPending ? "Starting…" : "I agree — start"}
+            </Button>
+            {!allAccepted && (
+              <p className="text-center text-xs text-faint">
+                All three are required. Without consent there is no session — that is deliberate.
+              </p>
+            )}
+          </div>
+        </GradientCard>
+
+        <h2 className="mt-10 mb-4 text-xl font-semibold tracking-tight text-ink">
+          How you&rsquo;ll answer
+        </h2>
+        <Card className="space-y-5 p-6">
+          <p className="text-sm leading-relaxed text-muted">
+            Answers are <strong className="font-medium text-ink">spoken by default</strong>, the
+            way an interview actually works. You can switch to typing at any point during the
+            session, including mid-answer, and it is scored exactly the same — only the transcript
+            is graded.
           </p>
-          <div className="row">
-            <button type="button" className="secondary" onClick={checkMicrophone}>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="button" variant="secondary" size="sm" onClick={checkMicrophone}>
+              <Mic aria-hidden="true" className="h-3.5 w-3.5" />
               Check my microphone
-            </button>
-            <span className="small muted" role="status">
-              {mic === "granted" && "Microphone ready."}
+            </Button>
+            <span
+              className={cn(
+                "text-xs",
+                mic === "granted" && "text-covered",
+                mic === "blocked" && "text-missed",
+                mic === "unknown" && "text-muted",
+              )}
+              role="status"
+            >
+              {mic === "granted" && "✓ Microphone ready."}
               {mic === "blocked" && "Blocked — allow it in your browser, or just type instead."}
               {mic === "unknown" && "Worth doing now, so the prompt doesn't interrupt you."}
             </span>
           </div>
-          <label className="row" style={{ fontWeight: 400, margin: 0 }}>
-            <input
-              type="checkbox"
-              style={{ width: "auto" }}
-              checked={onDevice || speech.engine === "wasm"}
-              disabled={speech.engine === "wasm" && !onDevice}
-              onChange={(event) => setOnDevice(event.target.checked)}
-            />
-            <span className="small">
-              Keep my voice on this device.{" "}
-              <span className="muted">
-                {speech.engine === "wasm" && !onDevice
-                  ? "Your browser has no built-in recognition, so this is the only option — and it is the more private one."
-                  : "Runs the speech model locally instead of your browser's cloud one. One-off ~40 MB download, then nothing leaves your machine."}
-              </span>
+          <CheckField
+            checked={onDevice || speech.engine === "wasm"}
+            disabled={speech.engine === "wasm" && !onDevice}
+            onChange={setOnDevice}
+          >
+            <span className="font-medium text-ink">Keep my voice on this device.</span>{" "}
+            <span className="text-muted">
+              {speech.engine === "wasm" && !onDevice
+                ? "Your browser has no built-in recognition, so this is the only option — and it is the more private one."
+                : "Runs the speech model locally instead of your browser's cloud one. One-off ~40 MB download, then nothing leaves your machine."}
             </span>
-          </label>
-        </div>
+          </CheckField>
+        </Card>
 
-        <h2>Your plan</h2>
-        <p className="muted small">
-          {plan.data?.questions.length} questions ·{" "}
-          {plan.data?.session.seniority} level · {plan.data?.session.target_minutes} minutes
+        <h2 className="mt-10 mb-2 text-xl font-semibold tracking-tight text-ink">Your plan</h2>
+        <p className="mb-4 flex flex-wrap items-center gap-2 text-xs text-muted">
+          <Badge>{plan.data?.questions.length} questions</Badge>
+          <Badge>{plan.data?.session.seniority} level</Badge>
+          <Badge>{plan.data?.session.target_minutes} minutes</Badge>
         </p>
-        <ol className="small">
-          {plan.data?.questions.map((question) => (
-            <li key={question.id} style={{ marginBottom: 6 }}>
-              <code>{question.competency_id}</code>{" "}
-              <span className="muted">{question.competency_id.replace(/-/g, " ")}</span>
-            </li>
+        <Card className="divide-y divide-line-soft">
+          {plan.data?.questions.map((question, index) => (
+            <div key={question.id} className="flex items-center gap-3 px-5 py-3">
+              <span className="w-5 shrink-0 font-mono text-xs text-faint">{index + 1}</span>
+              <code className="font-mono text-xs text-accent-soft">{question.competency_id}</code>
+              <span className="truncate text-xs text-muted">
+                {question.competency_id.replace(/-/g, " ")}
+              </span>
+            </div>
           ))}
-        </ol>
-      </div>
+        </Card>
+      </Shell>
     );
   }
 
   if (status && ["completed", "graded", "published", "reviewed"].includes(status)) {
     return (
-      <div className="shell">
-        <h1>Interview complete</h1>
-        <p className="muted">Your report is being prepared.</p>
-        <a href={`/report/${sessionId}`}>
-          <button>Open my report</button>
-        </a>
-      </div>
+      <Shell>
+        <PageHeader
+          title="Interview complete"
+          lede="Your report is being prepared."
+          actions={<LinkButton href={`/report/${sessionId}`}>Open my report</LinkButton>}
+        />
+      </Shell>
     );
   }
 
   // ── turn loop ───────────────────────────────────────────────────────────
   const current = turn.data;
-  if (!current) return <div className="shell">Loading the next question…</div>;
+  if (!current) {
+    return (
+      <Shell>
+        <p className="animate-pulse text-sm text-muted">Loading the next question…</p>
+      </Shell>
+    );
+  }
 
   const progress = ((current.ordinal + 1) / Math.max(1, current.total)) * 100;
   const submitError = submit.error as ApiError | null;
@@ -376,10 +417,11 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
   const hasAnswer = speech.text.trim().length > 0;
 
   return (
-    <div className="shell">
-      <div className="row small muted" style={{ justifyContent: "space-between" }}>
-        <span>
-          Question {current.ordinal + 1} of {current.total}
+    <Shell>
+      <div className="mb-2 flex items-baseline justify-between gap-3 text-xs text-muted">
+        <span className="font-medium text-ink">
+          Question {current.ordinal + 1}{" "}
+          <span className="font-normal text-faint">of {current.total}</span>
         </span>
         {/* An estimate, said as one. Nothing ends the session on time: this is
             practice, so every planned question gets asked however long it
@@ -389,43 +431,50 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
           ~{current.remaining_minutes} min left (estimate)
         </span>
       </div>
-      <div
-        className="meter"
-        role="progressbar"
-        aria-valuenow={current.ordinal + 1}
-        aria-valuemin={1}
-        aria-valuemax={current.total}
-        aria-label="Interview progress"
-        style={{ margin: "8px 0 24px" }}
-      >
-        <span style={{ width: `${progress}%` }} />
-      </div>
+      <Meter
+        percent={progress}
+        valueNow={current.ordinal + 1}
+        valueMin={1}
+        valueMax={current.total}
+        ariaLabel="Interview progress"
+        className="mb-8"
+      />
 
-      <div className="card">
-        <p className="small muted" style={{ margin: 0 }}>
-          <code>{current.competency_id}</code>
-        </p>
-        <p style={{ fontSize: "1.15rem", margin: "10px 0 0" }} aria-live="polite">
+      <GlowCard className="mb-5 p-6 sm:p-7">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone="mono">{current.competency_id}</Badge>
+          {current.is_followup && <Badge tone="accent">Follow-up</Badge>}
+        </div>
+        <p
+          className="mt-4 text-lg leading-relaxed text-ink text-pretty sm:text-xl"
+          aria-live="polite"
+        >
           {currentPrompt}
         </p>
         {current.is_followup && (
-          <p className="small muted" style={{ marginTop: 8, marginBottom: 0 }}>
+          <p className="mt-3 text-xs text-faint">
             Follow-up on the same question — still the same topic, no new subject.
           </p>
         )}
         {voice.supported && (
-          <div className="row" style={{ marginTop: 12 }}>
-            <button
+          <div className="mt-5 flex flex-wrap items-center gap-3 border-t border-line-soft pt-4">
+            <Button
               type="button"
-              className="secondary"
+              variant="secondary"
+              size="sm"
               onClick={() => (voice.speaking ? voice.cancel() : voice.speak(currentPrompt ?? ""))}
             >
+              {voice.speaking ? (
+                <VolumeX aria-hidden="true" className="h-3.5 w-3.5" />
+              ) : (
+                <Volume2 aria-hidden="true" className="h-3.5 w-3.5" />
+              )}
               {voice.speaking ? "Stop reading" : "Read the question again"}
-            </button>
-            <label className="row small muted" style={{ fontWeight: 400, margin: 0 }}>
+            </Button>
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
               <input
                 type="checkbox"
-                style={{ width: "auto" }}
+                className="h-3.5 w-3.5 rounded border-line-strong bg-glass-3 accent-accent"
                 checked={muted}
                 onChange={(event) => setMuted(event.target.checked)}
               />
@@ -433,30 +482,33 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
             </label>
           </div>
         )}
-      </div>
+      </GlowCard>
 
       {hints.map((hint, index) => (
-        <div className="notice small" key={index} style={{ marginBottom: 10 }} role="status">
-          <strong>Hint {index + 1}:</strong> {hint.text}
-          <div className="muted" style={{ marginTop: 6 }}>
-            {hint.scoring_note}
-          </div>
-        </div>
+        <Notice tone="accent" key={index} className="mb-3 text-[0.8125rem]" role="status">
+          <span className="flex gap-2.5">
+            <Lightbulb aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-partial" />
+            <span>
+              <strong className="font-semibold text-ink">Hint {index + 1}:</strong> {hint.text}
+              <span className="mt-1.5 block text-xs text-muted">{hint.scoring_note}</span>
+            </span>
+          </span>
+        </Notice>
       ))}
 
       {submitError && (
-        <p className="error" role="alert">
+        <ErrorNote role="alert" className="mb-3">
           {submitError.message}
-        </p>
+        </ErrorNote>
       )}
       {speech.error && (
-        <p className="error" role="alert">
+        <ErrorNote role="alert" className="mb-3">
           {speech.error}
-        </p>
+        </ErrorNote>
       )}
 
       <form
-        className="stack"
+        className="space-y-4"
         onSubmit={(event) => {
           event.preventDefault();
           // G-006: wait for the recogniser to hand over its last words before
@@ -475,36 +527,29 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
           })();
         }}
       >
-        <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-          <label htmlFor="answer">Your answer</label>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Label htmlFor="answer" className="mb-0">
+            Your answer
+          </Label>
           {speech.supported && (
-            <div className="row small" role="group" aria-label="How to answer">
-              <button
-                type="button"
-                className={mode === "voice" ? undefined : "secondary"}
-                aria-pressed={mode === "voice"}
-                onClick={() => setMode("voice")}
-              >
-                Speak
-              </button>
-              <button
-                type="button"
-                className={mode === "text" ? undefined : "secondary"}
-                aria-pressed={mode === "text"}
-                onClick={() => {
-                  speech.stop();
-                  setMode("text");
-                }}
-              >
-                Type
-              </button>
-            </div>
+            <Segmented
+              options={ANSWER_MODES}
+              value={mode}
+              variant="radio"
+              size="sm"
+              ariaLabel="How to answer"
+              className="w-auto"
+              onChange={(next) => {
+                if (next === "text") speech.stop();
+                setMode(next);
+              }}
+            />
           )}
         </div>
 
         {mode === "voice" && speech.supported && (
-          <div className="card stack" style={{ marginBottom: 0 }}>
-            <div className="row">
+          <Card className="space-y-3 p-5">
+            <div className="flex flex-wrap items-center gap-4">
               <button
                 type="button"
                 disabled={speech.preparing}
@@ -517,10 +562,22 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
                   speech.start();
                 }}
                 aria-label={speech.listening ? "Stop recording" : "Start recording your answer"}
+                className={cn(
+                  "relative flex h-14 w-14 shrink-0 items-center justify-center rounded-full",
+                  "transition-all duration-200 disabled:opacity-50",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-soft focus-visible:ring-offset-2 focus-visible:ring-offset-void",
+                  speech.listening
+                    ? "animate-halo bg-missed text-white"
+                    : "bg-gradient-to-br from-accent-deep to-accent text-white shadow-[0_10px_30px_-12px_rgba(139,92,246,1)] hover:brightness-110",
+                )}
               >
-                {speech.preparing ? "Preparing…" : speech.listening ? "◼ Stop" : "● Start speaking"}
+                {speech.listening ? (
+                  <Square aria-hidden="true" className="h-5 w-5 fill-current" />
+                ) : (
+                  <Mic aria-hidden="true" className="h-5 w-5" />
+                )}
               </button>
-              <span className="small muted" role="status" aria-live="polite">
+              <span className="min-w-0 flex-1 text-sm text-muted" role="status" aria-live="polite">
                 {speech.preparing
                   ? // Said out loud because it is a 40 MB download on a cold
                     // cache, and an unexplained ten-second button is a bug
@@ -534,60 +591,64 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
               </span>
             </div>
             {speech.interim && (
-              <p className="small muted" style={{ margin: 0, fontStyle: "italic" }}>
+              <p className="border-l-2 border-accent/40 pl-3 text-sm text-muted italic">
                 {speech.interim}…
               </p>
             )}
             {speech.engine === "wasm" && (
-              <p className="small muted" style={{ margin: 0 }}>
+              <p className="text-xs text-faint">
                 Running on this device — your audio isn&rsquo;t leaving it.
               </p>
             )}
-          </div>
+          </Card>
         )}
 
-        <textarea
-          id="answer"
-          ref={answerRef}
-          value={speech.text}
-          onChange={(event) => speech.setText(event.target.value)}
-          placeholder={
-            mode === "voice"
-              ? "What you say appears here. Edit it freely before submitting."
-              : "Explain it however you'd explain it to a colleague. Plain words are fine."
-          }
-          aria-describedby="answer-help"
-        />
-        <p id="answer-help" className="small muted" style={{ marginTop: -4 }}>
-          Don&rsquo;t reach for the textbook term. Describe what actually happens.
-          {mode === "voice" && " This text is what gets graded, so correct anything misheard."}
-        </p>
+        <div>
+          <Textarea
+            id="answer"
+            ref={answerRef}
+            value={speech.text}
+            onChange={(event) => speech.setText(event.target.value)}
+            placeholder={
+              mode === "voice"
+                ? "What you say appears here. Edit it freely before submitting."
+                : "Explain it however you'd explain it to a colleague. Plain words are fine."
+            }
+            aria-describedby="answer-help"
+          />
+          <p id="answer-help" className="mt-2 text-xs text-muted">
+            Don&rsquo;t reach for the textbook term. Describe what actually happens.
+            {mode === "voice" && " This text is what gets graded, so correct anything misheard."}
+          </p>
+        </div>
 
         {uncertain.length > 0 && (
-          <div className="notice small" role="status">
-            <strong>Worth checking.</strong> I wasn&rsquo;t confident I heard these correctly:{" "}
+          <Notice role="status" className="text-[0.8125rem]">
+            <strong className="font-semibold text-partial">Worth checking.</strong> I
+            wasn&rsquo;t confident I heard these correctly:{" "}
             {uncertain.map((segment) => `"${segment.text}"`).join(", ")}. They&rsquo;re graded as
             written above, so fix anything wrong.
-          </div>
+          </Notice>
         )}
 
-        <div className="row">
-          <button type="submit" disabled={submit.isPending || !hasAnswer}>
+        <div className="flex flex-wrap gap-2 border-t border-line-soft pt-4">
+          <Button type="submit" disabled={submit.isPending || !hasAnswer}>
             {submit.isPending ? "Submitting…" : "Submit answer"}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="secondary"
+            variant="secondary"
             disabled={askHint.isPending || current.hints_used >= 3}
             onClick={() => askHint.mutate(current.question_id)}
           >
+            <Lightbulb aria-hidden="true" className="h-3.5 w-3.5" />
             {current.hints_used >= 3
               ? "No hints left"
               : `Give me a hint (${3 - current.hints_used} left)`}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
-            className="secondary"
+            variant="ghost"
             disabled={submit.isPending}
             onClick={() => {
               speech.stop();
@@ -595,10 +656,19 @@ export function InterviewRoom({ sessionId }: { sessionId: string }) {
             }}
           >
             Skip
-          </button>
+          </Button>
         </div>
-        <p className="small muted">Skipping is recorded as skipped, not as wrong.</p>
+        <p className="text-xs text-faint">Skipping is recorded as skipped, not as wrong.</p>
       </form>
-    </div>
+    </Shell>
+  );
+}
+
+/** One line of the consent disclosure: a bolded claim and its qualification. */
+function Disclosure({ heading, children }: { heading: string; children: React.ReactNode }) {
+  return (
+    <p className="text-sm leading-relaxed text-muted">
+      <strong className="font-semibold text-ink">{heading}</strong> {children}
+    </p>
   );
 }

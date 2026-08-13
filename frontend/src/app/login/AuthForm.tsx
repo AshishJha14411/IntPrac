@@ -3,6 +3,11 @@
 import { useMutation } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { GradientCard } from "@/components/ui/card";
+import { ErrorNote } from "@/components/ui/feedback";
+import { Hint, Input, Label } from "@/components/ui/field";
+import { Segmented } from "@/components/ui/segmented";
 import { ApiError, api } from "@/lib/api";
 import { GoogleButton } from "./GoogleButton";
 
@@ -14,6 +19,11 @@ const OAUTH_ERRORS: Record<string, string> = {
   failed:
     "Google sign-in could not be completed. Try again, or use an email and password instead.",
 };
+
+const MODES = [
+  { value: "login" as const, label: "Sign in" },
+  { value: "register" as const, label: "Create account" },
+];
 
 /**
  * Client island: the interactive part of an otherwise static page.
@@ -43,98 +53,86 @@ export function AuthForm() {
   const error = submit.error as ApiError | null;
 
   return (
-    <form
-      className="card stack"
-      onSubmit={(event) => {
-        event.preventDefault();
-        submit.mutate();
-      }}
-    >
-      <div className="row" role="tablist" aria-label="Sign in or create an account">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "login"}
-          className={mode === "login" ? "" : "secondary"}
-          onClick={() => setMode("login")}
-        >
-          Sign in
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={mode === "register"}
-          className={mode === "register" ? "" : "secondary"}
-          onClick={() => setMode("register")}
-        >
-          Create account
-        </button>
-      </div>
-
-      {oauthError && (
-        <p className="error" role="alert">
-          {oauthError}
-        </p>
-      )}
-
-      <GoogleButton />
-
-      {error && (
-        <p className="error" role="alert">
-          {error.message}
-          {error.problem?.request_id && (
-            <span className="small muted mono"> ({error.problem.request_id})</span>
-          )}
-        </p>
-      )}
-
-      <div>
-        <label htmlFor="email">Email</label>
-        <input
-          id="email"
-          type="email"
-          autoComplete="email"
-          required
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
+    <GradientCard>
+      <form
+        className="space-y-5 p-6 sm:p-7"
+        onSubmit={(event) => {
+          event.preventDefault();
+          submit.mutate();
+        }}
+      >
+        <Segmented
+          options={MODES}
+          value={mode}
+          onChange={setMode}
+          ariaLabel="Sign in or create an account"
         />
-      </div>
 
-      {mode === "register" && (
+        {oauthError && <ErrorNote role="alert">{oauthError}</ErrorNote>}
+
+        <GoogleButton />
+
+        {error && (
+          <ErrorNote role="alert">
+            {error.message}
+            {error.problem?.request_id && (
+              <span className="ml-1 font-mono text-xs opacity-70">
+                ({error.problem.request_id})
+              </span>
+            )}
+          </ErrorNote>
+        )}
+
         <div>
-          <label htmlFor="name">Display name</label>
-          <input
-            id="name"
-            autoComplete="name"
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            required
+            placeholder="you@example.com"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
           />
         </div>
-      )}
 
-      <div>
-        <label htmlFor="password">Password</label>
-        <input
-          id="password"
-          type="password"
-          autoComplete={mode === "login" ? "current-password" : "new-password"}
-          required
-          minLength={mode === "register" ? 12 : undefined}
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          aria-describedby={mode === "register" ? "pw-help" : undefined}
-        />
         {mode === "register" && (
-          <p id="pw-help" className="small muted" style={{ margin: "6px 0 0" }}>
-            At least 12 characters. Length is what actually matters — a passphrase beats
-            punctuation.
-          </p>
+          <div>
+            <Label htmlFor="name">Display name</Label>
+            <Input
+              id="name"
+              autoComplete="name"
+              placeholder="Optional"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+          </div>
         )}
-      </div>
 
-      <button type="submit" disabled={submit.isPending}>
-        {submit.isPending ? "Working…" : mode === "login" ? "Sign in" : "Create account"}
-      </button>
-    </form>
+        <div>
+          <Label htmlFor="password">Password</Label>
+          <Input
+            id="password"
+            type="password"
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
+            required
+            minLength={mode === "register" ? 12 : undefined}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            aria-describedby={mode === "register" ? "pw-help" : undefined}
+          />
+          {mode === "register" && (
+            <Hint id="pw-help">
+              At least 12 characters. Length is what actually matters — a passphrase beats
+              punctuation.
+            </Hint>
+          )}
+        </div>
+
+        <Button type="submit" size="lg" disabled={submit.isPending} className="w-full">
+          {submit.isPending ? "Working…" : mode === "login" ? "Sign in" : "Create account"}
+        </Button>
+      </form>
+    </GradientCard>
   );
 }

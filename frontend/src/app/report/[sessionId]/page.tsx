@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
+import { ErrorNote } from "@/components/ui/feedback";
+import { PageHeader, Shell } from "@/components/ui/shell";
 import { ApiError, INTERNAL_API_BASE, api } from "@/lib/api";
 import { ReportBody } from "./ReportBody";
 import type { SessionReport } from "@/lib/types";
@@ -40,10 +42,10 @@ export default async function ReportPage({
       return <ClientReport sessionId={sessionId} />;
     }
     return (
-      <div className="shell">
-        <h1>Report unavailable</h1>
-        <p className="error">{problem.message}</p>
-      </div>
+      <Shell>
+        <PageHeader title="Report unavailable" />
+        <ErrorNote role="alert">{problem.message}</ErrorNote>
+      </Shell>
     );
   }
 

@@ -3,6 +3,11 @@
 import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { GlowCard } from "@/components/ui/card";
+import { ErrorNote, Notice } from "@/components/ui/feedback";
+import { Hint, Input, Label, Select, Textarea } from "@/components/ui/field";
+import { Segmented } from "@/components/ui/segmented";
 import { ApiError, api } from "@/lib/api";
 import type { Seniority, SessionPlan } from "@/lib/types";
 
@@ -31,6 +36,12 @@ type Source = "jd" | "resume" | "combined";
 
 const NEEDS_JD: ReadonlySet<Source> = new Set<Source>(["jd", "combined"]);
 const NEEDS_RESUME: ReadonlySet<Source> = new Set<Source>(["resume", "combined"]);
+
+const SOURCES = [
+  { value: "jd" as const, label: "A job description" },
+  { value: "resume" as const, label: "My resume" },
+  { value: "combined" as const, label: "Both" },
+];
 
 const DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const ACCEPTED: Record<string, string> = { "application/pdf": ".pdf", [DOCX]: ".docx" };
@@ -201,169 +212,179 @@ export function NewSessionForm() {
   }
 
   return (
-    <form
-      className="card stack"
-      onSubmit={(event) => {
-        event.preventDefault();
-        start.mutate();
-      }}
-    >
-      <div className="row" role="tablist" aria-label="What should choose the topics?">
-        {(
-          [
-            ["jd", "A job description"],
-            ["resume", "My resume"],
-            ["combined", "Both"],
-          ] as const
-        ).map(([value, caption]) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={source === value}
-            className={source === value ? "" : "secondary"}
-            onClick={() => setSource(value)}
-          >
-            {caption}
-          </button>
-        ))}
-      </div>
-
-      {source === "combined" && (
-        <p className="small muted" style={{ margin: 0 }}>
-          With both, the questions come from the <strong>overlap</strong> — what the role asks for
-          and you have actually done. Where the role wants something your resume doesn&rsquo;t
-          evidence, you&rsquo;ll be asked whether you could get there, not marked down for not
-          being there already.
-        </p>
-      )}
-
-      {error && (
-        <p className="error" role="alert">
-          {error.code === "authentication-required" ? (
-            <>
-              You need to <a href="/login">sign in</a> first.
-            </>
-          ) : (
-            error.message
-          )}
-        </p>
-      )}
-
-      <div>
-        <label htmlFor="title">
-          {NEEDS_JD.has(source) ? "Role title" : "Label for this resume"}
-        </label>
-        <input
-          id="title"
-          value={title}
-          placeholder={NEEDS_JD.has(source) ? "Senior Backend Engineer" : "My resume"}
-          onChange={(event) => setTitle(event.target.value)}
-        />
-      </div>
-
-      {NEEDS_JD.has(source) && (
+    <GlowCard>
+      <form
+        className="space-y-6 p-6 sm:p-8"
+        onSubmit={(event) => {
+          event.preventDefault();
+          start.mutate();
+        }}
+      >
         <div>
-          <label htmlFor="jd">Job description</label>
-          <textarea
-            id="jd"
-            required
-            minLength={40}
-            value={text}
-            placeholder="Paste the full job description here…"
-            onChange={(event) => setText(event.target.value)}
-            aria-describedby="jd-help"
+          <p className="mb-3 text-sm font-medium text-ink">What should choose the topics?</p>
+          <Segmented
+            options={SOURCES}
+            value={source}
+            onChange={setSource}
+            ariaLabel="What should choose the topics?"
           />
-          <p id="jd-help" className="small muted" style={{ margin: "6px 0 0" }}>
-            The more specific the requirements, the better the topic selection. A vague JD
-            produces a vague interview, and we&rsquo;ll tell you if that happens.
-          </p>
         </div>
-      )}
 
-      {NEEDS_RESUME.has(source) && (
+        {source === "combined" && (
+          <Notice tone="accent" className="text-[0.8125rem]">
+            With both, the questions come from the{" "}
+            <strong className="font-semibold text-ink">overlap</strong> — what the role asks for
+            and you have actually done. Where the role wants something your resume doesn&rsquo;t
+            evidence, you&rsquo;ll be asked whether you could get there, not marked down for not
+            being there already.
+          </Notice>
+        )}
+
+        {error && (
+          <ErrorNote role="alert">
+            {error.code === "authentication-required" ? (
+              <>
+                You need to{" "}
+                <a href="/login" className="font-semibold underline underline-offset-4">
+                  sign in
+                </a>{" "}
+                first.
+              </>
+            ) : (
+              error.message
+            )}
+          </ErrorNote>
+        )}
+
         <div>
-          <label htmlFor="resume">Your resume</label>
-          <input
-            id="resume"
-            type="file"
-            accept={Object.values(ACCEPTED).join(",")}
-            onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
-            aria-describedby="resume-help"
+          <Label htmlFor="title">
+            {NEEDS_JD.has(source) ? "Role title" : "Label for this resume"}
+          </Label>
+          <Input
+            id="title"
+            value={title}
+            placeholder={NEEDS_JD.has(source) ? "Senior Backend Engineer" : "My resume"}
+            onChange={(event) => setTitle(event.target.value)}
           />
-          {fileError && (
-            <p className="error small" role="alert" style={{ margin: "6px 0 0" }}>
-              {fileError}
+        </div>
+
+        {NEEDS_JD.has(source) && (
+          <div>
+            <Label htmlFor="jd">Job description</Label>
+            <Textarea
+              id="jd"
+              required
+              minLength={40}
+              value={text}
+              placeholder="Paste the full job description here…"
+              onChange={(event) => setText(event.target.value)}
+              aria-describedby="jd-help"
+            />
+            <Hint id="jd-help">
+              The more specific the requirements, the better the topic selection. A vague JD
+              produces a vague interview, and we&rsquo;ll tell you if that happens.
+            </Hint>
+          </div>
+        )}
+
+        {NEEDS_RESUME.has(source) && (
+          <div>
+            <Label htmlFor="resume">Your resume</Label>
+            <Input
+              id="resume"
+              type="file"
+              accept={Object.values(ACCEPTED).join(",")}
+              onChange={(event) => chooseFile(event.target.files?.[0] ?? null)}
+              aria-describedby="resume-help"
+            />
+            {fileError && (
+              <ErrorNote role="alert" className="mt-2 text-xs">
+                {fileError}
+              </ErrorNote>
+            )}
+            <Hint id="resume-help">
+              PDF or DOCX, up to 10 MB. It goes{" "}
+              <strong className="font-medium text-ink">straight to storage</strong> — the API only
+              signs the link and never sees the file. What it extracts decides which topics you get
+              asked about; it is then discarded, and nothing that grades you ever reads it.
+            </Hint>
+          </div>
+        )}
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="seniority">Level</Label>
+            <Select
+              id="seniority"
+              value={seniority}
+              onChange={(event) => setSeniority(event.target.value as Seniority)}
+              aria-describedby="seniority-help"
+            >
+              <option value="mid">Mid</option>
+              <option value="senior">Senior</option>
+            </Select>
+          </div>
+          <div>
+            <Label htmlFor="minutes">Target length</Label>
+            <Select
+              id="minutes"
+              value={minutes}
+              onChange={(event) => setMinutes(Number(event.target.value))}
+            >
+              <option value={10}>10 minutes</option>
+              <option value={20}>20 minutes</option>
+              <option value={30}>30 minutes</option>
+              <option value={45}>45 minutes</option>
+            </Select>
+          </div>
+        </div>
+        <Hint id="seniority-help" className="-mt-3">
+          The same topic at a different level is graded against a different standard, so pick the
+          level you&rsquo;re actually interviewing at. It is never inferred from your documents.
+        </Hint>
+
+        <div className="border-t border-line-soft pt-6">
+          <Button type="submit" size="lg" disabled={start.isPending || !ready} className="w-full">
+            {start.isPending ? (status ?? "Working…") : "Build my interview"}
+          </Button>
+
+          {start.isPending && status && (
+            <p
+              className="mt-3 flex items-center justify-center gap-2 text-xs text-muted"
+              role="status"
+              aria-live="polite"
+            >
+              <span
+                aria-hidden="true"
+                className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent-soft"
+              />
+              {status}
             </p>
           )}
-          <p id="resume-help" className="small muted" style={{ margin: "6px 0 0" }}>
-            PDF or DOCX, up to 10 MB. It goes <strong>straight to storage</strong> — the API only
-            signs the link and never sees the file. What it extracts decides which topics you get
-            asked about; it is then discarded, and nothing that grades you ever reads it.
-          </p>
         </div>
-      )}
 
-      <div className="row">
-        <div style={{ flex: 1, minWidth: 180 }}>
-          <label htmlFor="seniority">Level</label>
-          <select
-            id="seniority"
-            value={seniority}
-            onChange={(event) => setSeniority(event.target.value as Seniority)}
-            aria-describedby="seniority-help"
-          >
-            <option value="mid">Mid</option>
-            <option value="senior">Senior</option>
-          </select>
-        </div>
-        <div style={{ flex: 1, minWidth: 180 }}>
-          <label htmlFor="minutes">Target length</label>
-          <select
-            id="minutes"
-            value={minutes}
-            onChange={(event) => setMinutes(Number(event.target.value))}
-          >
-            <option value={10}>10 minutes</option>
-            <option value={20}>20 minutes</option>
-            <option value={30}>30 minutes</option>
-            <option value={45}>45 minutes</option>
-          </select>
-        </div>
-      </div>
-      <p id="seniority-help" className="small muted" style={{ marginTop: -4 }}>
-        The same topic at a different level is graded against a different standard, so pick the
-        level you&rsquo;re actually interviewing at. It is never inferred from your documents.
-      </p>
-
-      <button type="submit" disabled={start.isPending || !ready}>
-        {start.isPending ? (status ?? "Working…") : "Build my interview"}
-      </button>
-
-      {start.isPending && status && (
-        <p className="small muted" role="status" aria-live="polite">
-          {status}
-        </p>
-      )}
-
-      {quality && quality.rating !== "strong" && (
-        <div className="notice small" role="status">
-          <strong>
-            Your resume yielded {quality.competencies_found} technical topic
-            {quality.competencies_found === 1 ? "" : "s"}.
-          </strong>{" "}
-          The interview will still be full length — we fill the rest from related
-          topics — but the more your resume evidences, the more of it is about{" "}
-          <em>your</em> work.
-          <ul style={{ margin: "8px 0 0", paddingLeft: 18 }}>
-            {quality.suggestions.map((suggestion, index) => (
-              <li key={index} style={{ marginBottom: 4 }}>
-                {suggestion}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </form>
+        {quality && quality.rating !== "strong" && (
+          <Notice role="status" className="text-[0.8125rem]">
+            <strong className="font-semibold text-ink">
+              Your resume yielded {quality.competencies_found} technical topic
+              {quality.competencies_found === 1 ? "" : "s"}.
+            </strong>{" "}
+            The interview will still be full length — we fill the rest from related topics — but
+            the more your resume evidences, the more of it is about{" "}
+            <em className="text-ink/90">your</em> work.
+            <ul className="mt-2.5 space-y-1.5">
+              {quality.suggestions.map((suggestion, index) => (
+                <li key={index} className="flex gap-2 text-muted">
+                  <span aria-hidden="true" className="text-accent-soft">
+                    →
+                  </span>
+                  {suggestion}
+                </li>
+              ))}
+            </ul>
+          </Notice>
+        )}
+      </form>
+    </GlowCard>
   );
 }
