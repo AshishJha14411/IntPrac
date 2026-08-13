@@ -1,4 +1,6 @@
-import Link from "next/link";
+import { Aurora, GridGround } from "@/components/ui/backgrounds";
+import { LinkButton } from "@/components/ui/button";
+import { PageHeader, Shell } from "@/components/ui/shell";
 
 /**
  * App Router 404.
@@ -9,12 +11,17 @@ import Link from "next/link";
  */
 export default function NotFound() {
   return (
-    <div className="shell">
-      <h1>Not found</h1>
-      <p className="muted">That page doesn&rsquo;t exist, or it isn&rsquo;t yours to see.</p>
-      <Link href="/">
-        <button>Back to the start</button>
-      </Link>
+    <div className="relative isolate">
+      <Aurora className="h-[30rem]" />
+      <GridGround className="h-[30rem]" />
+      <Shell className="relative">
+        <p className="text-gradient-accent mb-2 font-mono text-6xl font-semibold">404</p>
+        <PageHeader
+          title="Not found"
+          lede="That page doesn’t exist, or it isn’t yours to see."
+          actions={<LinkButton href="/">Back to the start</LinkButton>}
+        />
+      </Shell>
     </div>
   );
 }

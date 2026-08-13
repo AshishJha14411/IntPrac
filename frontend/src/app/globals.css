@@ -1,178 +1,374 @@
-/* A small, deliberate design system.
-   Colour is never the only signal (NFR-A / WCAG 2.2 AA): every coverage chip
-   carries a glyph and a word as well as a hue. */
+@import "tailwindcss";
 
-:root {
-  --bg: #0f1115;
-  --surface: #171a21;
-  --surface-2: #1e222b;
-  --border: #2a2f3a;
-  --text: #e8eaed;
-  --muted: #9aa2b1;
-  --accent: #6ea8fe;
-  --covered: #4ade80;
-  --partial: #fbbf24;
-  --missed: #f87171;
-  --contradicted: #fb7185;
-  --radius: 10px;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-}
+/* ============================================================================
+   The design system.
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f7f8fa;
-    --surface: #ffffff;
-    --surface-2: #f0f2f5;
-    --border: #d9dee7;
-    --text: #16181d;
-    --muted: #5a6373;
-    --accent: #1a56db;
-    --covered: #157f3d;
-    --partial: #9a6700;
-    --missed: #b42318;
-    --contradicted: #9f1239;
+   Aceternity's look, expressed as tokens rather than copied class strings:
+   surfaces made of one step of contrast against the ground rather than a
+   different grey, a violet→indigo accent that appears as a gradient far more
+   often than as a flat fill, and light that comes from behind the content
+   (spotlights, auroras, glows) instead of from a border.
+
+   ── Why no component below this file says "white" ─────────────────────────
+
+   Aceternity's snippets build surfaces out of translucent white: a card is
+   `bg-white/[0.03]` inside `border-white/10`. That works exactly once, on a
+   black page. Over a light ground white-on-white is nothing at all, so a
+   theme switch turns every card into a rectangle of the page colour.
+
+   So every surface, hairline and bloom is a **named token** that both themes
+   define. A component asks for `bg-glass` and gets whatever "one step up from
+   the ground" means in the current theme. Two consequences worth knowing:
+
+   - A literal `bg-white/10` in a component is a bug, not a shortcut. It will
+     look right in dark and vanish in light.
+   - Both palettes live here and nowhere else, so checking contrast means
+     reading one file.
+
+   ── Two rules that survive both themes ─────────────────────────────────────
+
+   1. Colour is never the only signal (NFR-A / WCAG 2.2 AA). Every verdict
+      chip carries a glyph and a word. The accent gradients are decoration;
+      nothing is encoded in them alone.
+   2. Focus is always visible. Aceternity's components lean on
+      `focus:outline-none`; ours re-add a ring in the same breath, and the
+      base layer below makes that the default rather than something each
+      component has to remember.
+
+   ── Which theme you get ────────────────────────────────────────────────────
+
+   The dark palette is the one in `@theme`, so it is what renders if the
+   inline script in `layout.tsx` never runs. Light is an override keyed on
+   `[data-theme="light"]`. That ordering is deliberate: the failure mode of a
+   broken theme script is the design we already shipped, not an unstyled page.
+   ========================================================================= */
+
+/* Both directions, because "no attribute at all" has to mean dark: that is the
+   state the page is in for the instant before the inline script runs, and the
+   state it stays in if the script never does. So anything that must differ per
+   theme opts *into* light with `light:`, rather than opting into dark. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+
+@theme {
+  /* ── ground and surfaces ────────────────────────────────────────────── */
+  --color-void: #030308;
+  --color-panel: #08080f;
+  --color-raised: #0d0d17;
+
+  /* Translucent lifts. `glass` is a card on the page; `glass-2` is a field or
+     a hover; `glass-3` is pressed or selected. */
+  --color-glass: rgb(255 255 255 / 0.025);
+  --color-glass-2: rgb(255 255 255 / 0.045);
+  --color-glass-3: rgb(255 255 255 / 0.08);
+
+  /* Hairlines. `soft` divides, plain outlines, `strong` is hover or emphasis. */
+  --color-line-soft: rgb(255 255 255 / 0.07);
+  --color-line: rgb(255 255 255 / 0.11);
+  --color-line-strong: rgb(255 255 255 / 0.22);
+
+  /* The highlight along a surface's top edge — light falling from above. */
+  --color-sheen: rgb(255 255 255 / 0.04);
+  --color-sheen-strong: rgb(255 255 255 / 0.14);
+
+  /* ── ink ────────────────────────────────────────────────────────────── */
+  --color-ink: #ededf2;
+  --color-muted: #9ca0b0;
+  --color-faint: #6b7080;
+  --color-title-from: #ffffff;
+  --color-title-to: #8d92a6;
+
+  /* ── accent ─────────────────────────────────────────────────────────── */
+  --color-accent: #8b5cf6;
+  --color-accent-deep: #6366f1;
+  --color-accent-soft: #c4b5fd;
+  --color-accent-cool: #22d3ee;
+
+  /* ── verdicts. Contrast-checked against the ground of each theme. ───── */
+  --color-covered: #34d399; /* 10.4:1 on --color-void */
+  --color-partial: #fbbf24; /* 11.9:1 */
+  --color-missed: #fb7185; /*  6.5:1 */
+
+  /* ── decoration ─────────────────────────────────────────────────────── */
+  --color-bloom-1: rgb(99 102 241 / 0.22);
+  --color-bloom-2: rgb(139 92 246 / 0.18);
+  --color-bloom-3: rgb(34 211 238 / 0.1);
+  --color-spotlight: #c4b5fd;
+  --color-glow: rgb(139 92 246 / 0.16);
+  --color-glow-cool: rgb(34 211 238 / 0.13);
+  --color-lattice: rgb(255 255 255 / 0.045);
+  --color-dot: rgb(255 255 255 / 0.09);
+  --color-scrollbar: rgb(255 255 255 / 0.15);
+
+  /* ── elevation ──────────────────────────────────────────────────────── */
+  --shadow-card:
+    0 1px 0 0 rgb(255 255 255 / 0.06) inset, 0 18px 40px -24px rgb(0 0 0 / 0.9);
+  --shadow-input:
+    0 1px 0 0 rgb(255 255 255 / 0.04) inset, 0 1px 2px 0 rgb(0 0 0 / 0.5);
+  --shadow-hairline: 0 1px 0 0 rgb(255 255 255 / 0.05) inset;
+  --shadow-pill:
+    0 1px 0 0 rgb(255 255 255 / 0.12) inset, 0 6px 16px -10px rgb(139 92 246 / 0.8);
+  --shadow-glow:
+    0 1px 0 0 rgb(255 255 255 / 0.22) inset, 0 10px 28px -12px rgb(139 92 246 / 0.9);
+
+  --font-sans:
+    ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", Inter,
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* ── motion ─────────────────────────────────────────────────────────── */
+  --animate-spotlight: spotlight 2.2s ease 0.4s 1 forwards;
+  --animate-aurora: aurora 22s ease-in-out infinite alternate;
+  --animate-sheen: sheen 3.2s ease-in-out infinite;
+  --animate-orbit: orbit 2.6s linear infinite;
+  --animate-rise: rise 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-halo: halo 2s ease-out infinite;
+  --animate-drift: drift 14s ease-in-out infinite alternate;
+
+  /* The beam that sweeps in over the hero on first paint. */
+  @keyframes spotlight {
+    0% {
+      opacity: 0;
+      transform: translate(-72%, -62%) scale(0.5);
+    }
+    100% {
+      opacity: 1;
+      transform: translate(-50%, -40%) scale(1);
+    }
+  }
+
+  @keyframes aurora {
+    0% {
+      transform: translate3d(-8%, -4%, 0) scale(1);
+      opacity: 0.55;
+    }
+    50% {
+      opacity: 0.85;
+    }
+    100% {
+      transform: translate3d(8%, 6%, 0) scale(1.15);
+      opacity: 0.6;
+    }
+  }
+
+  /* The light that sweeps across a primary button. */
+  @keyframes sheen {
+    0%,
+    45% {
+      transform: translateX(-160%) skewX(-18deg);
+    }
+    100% {
+      transform: translateX(260%) skewX(-18deg);
+    }
+  }
+
+  /* The conic gradient that rotates inside a 1px border. */
+  @keyframes orbit {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* The ring that pulses out of a live microphone. */
+  @keyframes halo {
+    0% {
+      box-shadow: 0 0 0 0 rgb(251 113 133 / 0.5);
+    }
+    70% {
+      box-shadow: 0 0 0 12px rgb(251 113 133 / 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgb(251 113 133 / 0);
+    }
+  }
+
+  @keyframes drift {
+    from {
+      transform: translate3d(0, 0, 0);
+    }
+    to {
+      transform: translate3d(3%, -3%, 0);
+    }
   }
 }
 
-* { box-sizing: border-box; }
+/* ============================================================================
+   Light.
 
-html, body {
-  margin: 0;
-  padding: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+   Not the dark palette with the lightness inverted — that produces grey mud.
+   The structural difference is that translucent white stops being a surface
+   and becomes nothing, so in light the surfaces are *opaque and paler than
+   the ground* while the hairlines are translucent **ink** rather than
+   translucent white.
+
+   The accent also has to move. Violet-500 carries white text at 3.9:1, which
+   fails on a button; violet-600 is 5.2:1 and looks the same at a glance. Same
+   story for the verdicts: emerald-400 is 1.9:1 on white and unusable, so
+   light gets the 600/700 end of each ramp.
+
+   Unlayered on purpose — an unlayered rule beats anything in a cascade layer,
+   and `@theme` emits into the `theme` layer, so these win without needing to
+   out-specify anything.
+   ========================================================================= */
+
+:root[data-theme="light"] {
+  --color-void: #f6f7fb;
+  --color-panel: #ffffff;
+  --color-raised: #ffffff;
+
+  --color-glass: #ffffff;
+  --color-glass-2: #f1f2f8;
+  --color-glass-3: #e7e9f2;
+
+  --color-line-soft: rgb(15 18 40 / 0.07);
+  --color-line: rgb(15 18 40 / 0.13);
+  --color-line-strong: rgb(15 18 40 / 0.24);
+
+  --color-sheen: rgb(255 255 255 / 0.75);
+  --color-sheen-strong: #ffffff;
+
+  --color-ink: #14161f;
+  --color-muted: #545b6e; /*  7.5:1 on --color-void */
+  --color-faint: #6f7689; /*  4.6:1 — small text, so it has to clear 4.5 */
+  --color-title-from: #0f1220;
+  --color-title-to: #4a5165;
+
+  --color-accent: #7c3aed; /* white text: 5.2:1 */
+  --color-accent-deep: #4f46e5; /* white text: 6.5:1 */
+  --color-accent-soft: #6d28d9; /* text on ground: 7.2:1 */
+  --color-accent-cool: #0e7490;
+
+  --color-covered: #047857; /*  5.4:1 */
+  --color-partial: #9a6700; /*  4.6:1 */
+  --color-missed: #be123c; /*  6.5:1 */
+
+  /* Blooms have to drop by roughly half: the same alpha that reads as a glow
+     against black reads as a stain against white. */
+  --color-bloom-1: rgb(99 102 241 / 0.1);
+  --color-bloom-2: rgb(139 92 246 / 0.09);
+  --color-bloom-3: rgb(14 116 144 / 0.06);
+  --color-spotlight: #a78bfa;
+  --color-glow: rgb(124 58 237 / 0.09);
+  --color-glow-cool: rgb(14 116 144 / 0.07);
+  --color-lattice: rgb(15 18 40 / 0.05);
+  --color-dot: rgb(15 18 40 / 0.09);
+  --color-scrollbar: rgb(15 18 40 / 0.2);
+
+  /* Depth in light comes from a cast shadow, not an inset highlight: there is
+     no light source above a white card to catch. */
+  --shadow-card:
+    0 1px 2px 0 rgb(16 19 34 / 0.04), 0 14px 30px -18px rgb(16 19 34 / 0.22);
+  --shadow-input: 0 1px 2px 0 rgb(16 19 34 / 0.05);
+  --shadow-hairline: 0 1px 2px 0 rgb(16 19 34 / 0.04);
+  --shadow-pill: 0 1px 3px 0 rgb(16 19 34 / 0.12);
+  --shadow-glow: 0 10px 26px -12px rgb(124 58 237 / 0.6);
 }
 
-a { color: var(--accent); }
+@layer base {
+  :root {
+    /* Native UI — scrollbars, select popups, the checkbox tick — follows this
+       and nothing else, so it has to move with the tokens or a light page
+       renders a black dropdown. */
+    color-scheme: dark;
+  }
 
-/* Visible focus is a hard requirement, not a preference. */
-:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 4px;
+  :root[data-theme="light"] {
+    color-scheme: light;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-void);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Visible focus is a hard requirement, not a preference. Set here so that
+     no component can quietly lose it by copying an `outline-none` from a
+     snippet — every interactive element starts with a ring it has to opt out
+     of on purpose. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent-soft);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-accent) 40%, transparent);
+    color: var(--color-ink);
+  }
+
+  /* A thin scrollbar, because a default-width one in the wrong colour is the
+     loudest thing on either page. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-scrollbar) transparent;
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+  }
+
+  /* Ambient decoration is the first thing to go. Everything that moves on
+     this site is decorative — no state is communicated by animation alone —
+     so switching it all off costs the user nothing. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
 
-.shell { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
-.wide { max-width: 1080px; }
-
-h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 8px; letter-spacing: -0.02em; }
-h2 { font-size: 1.25rem; margin: 32px 0 12px; letter-spacing: -0.01em; }
-h3 { font-size: 1rem; margin: 20px 0 8px; }
-p { margin: 0 0 14px; }
-.muted { color: var(--muted); }
-.small { font-size: 0.875rem; }
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px;
-  margin: 0 0 16px;
+@utility text-gradient {
+  background-image: linear-gradient(
+    180deg,
+    var(--color-title-from) 0%,
+    color-mix(in oklab, var(--color-title-from) 45%, var(--color-title-to)) 72%,
+    var(--color-title-to) 100%
+  );
+  background-clip: text;
+  color: transparent;
 }
 
-.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.stack > * + * { margin-top: 12px; }
-
-label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 0.9rem; }
-
-input, textarea, select, button {
-  font: inherit;
-  color: inherit;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  padding: 10px 12px;
-  width: 100%;
+@utility text-gradient-accent {
+  background-image: linear-gradient(100deg, var(--color-accent-soft), var(--color-accent-cool));
+  background-clip: text;
+  color: transparent;
 }
 
-textarea { min-height: 160px; resize: vertical; line-height: 1.6; }
-
-button {
-  width: auto;
-  cursor: pointer;
-  background: var(--accent);
-  border-color: transparent;
-  color: #fff;
-  font-weight: 600;
-  padding: 10px 18px;
-}
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.secondary { background: var(--surface-2); color: var(--text); border-color: var(--border); }
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  border: 1px solid currentColor;
-}
-.chip.covered { color: var(--covered); }
-.chip.partial { color: var(--partial); }
-.chip.missing, .chip.contradicted { color: var(--missed); }
-
-.concept {
-  border-left: 3px solid var(--border);
-  padding: 2px 0 2px 14px;
-  margin: 14px 0;
-}
-.concept.covered { border-left-color: var(--covered); }
-.concept.partial { border-left-color: var(--partial); }
-.concept.missing, .concept.contradicted { border-left-color: var(--missed); }
-
-blockquote {
-  margin: 8px 0;
-  padding: 8px 12px;
-  border-left: 2px solid var(--border);
-  color: var(--muted);
-  font-style: italic;
+/* The Aceternity grid ground: a faint lattice fading out towards the edges. */
+@utility bg-lattice {
+  background-image:
+    linear-gradient(to right, var(--color-lattice) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--color-lattice) 1px, transparent 1px);
+  background-size: 56px 56px;
 }
 
-.meter { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
-.meter > span { display: block; height: 100%; background: var(--accent); }
-
-.error {
-  border: 1px solid var(--missed);
-  color: var(--missed);
-  border-radius: 8px;
-  padding: 10px 14px;
-  margin-bottom: 14px;
-}
-
-.notice {
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  border-radius: 8px;
-  padding: 12px 14px;
-}
-
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-th { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-
-code, .mono { font-family: var(--mono); font-size: 0.9em; }
-
-.skip-link {
-  position: absolute;
-  left: -9999px;
-}
-.skip-link:focus {
-  left: 12px;
-  top: 12px;
-  z-index: 10;
-  background: var(--surface);
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-}
-
-.visually-hidden {
-  position: absolute;
-  width: 1px; height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
+@utility bg-dotted {
+  background-image: radial-gradient(var(--color-dot) 1px, transparent 1px);
+  background-size: 18px 18px;
 }

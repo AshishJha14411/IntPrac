@@ -1,10 +1,15 @@
 "use client";
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Trash2, TrendingUp } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Button, LinkButton } from "@/components/ui/button";
+import { Card, GlowCard } from "@/components/ui/card";
+import { Badge, Meter, Notice, SectionHeading } from "@/components/ui/feedback";
 import { ApiError, api } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import type { ProgressPoint, SessionPage, SessionSummary } from "@/lib/types";
 
 /**
@@ -79,9 +84,12 @@ export function Dashboard() {
   );
   if (authError) {
     return (
-      <p className="notice" role="status">
-        <Link href="/login">Sign in</Link> to see your interviews.
-      </p>
+      <Notice role="status" tone="accent">
+        <Link href="/login" className="font-semibold text-accent-soft underline underline-offset-4">
+          Sign in
+        </Link>{" "}
+        to see your interviews.
+      </Notice>
     );
   }
 
@@ -102,22 +110,20 @@ export function Dashboard() {
         onDelete={(id) => remove.mutate(id)}
         deleting={remove.isPending}
       />
-      <DangerZone
-        onClose={() => closeAccount.mutate()}
-        pending={closeAccount.isPending}
-      />
+      <DangerZone onClose={() => closeAccount.mutate()} pending={closeAccount.isPending} />
     </>
   );
 }
 
 function TrendSection({ series, loading }: { series: ProgressPoint[]; loading: boolean }) {
-  if (loading) return <p className="muted">Loading your trend…</p>;
+  if (loading) return <p className="text-sm text-muted">Loading your trend…</p>;
   if (series.length === 0) {
     return (
-      <div className="notice" role="status">
-        <strong>No graded interviews yet.</strong> Finish one and this fills in — you&rsquo;ll see
-        each competency&rsquo;s score and whether it moved since last time.
-      </div>
+      <Notice role="status" tone="accent" className="p-5">
+        <strong className="font-semibold text-ink">No graded interviews yet.</strong> Finish one
+        and this fills in — you&rsquo;ll see each competency&rsquo;s score and whether it moved
+        since last time.
+      </Notice>
     );
   }
 
@@ -143,57 +149,57 @@ function TrendSection({ series, loading }: { series: ProgressPoint[]; loading: b
 
   return (
     <section>
-      <h2>How you&rsquo;re trending</h2>
+      <SectionHeading hint="Weakest first — that ordering is the point of the page.">
+        How you&rsquo;re trending
+      </SectionHeading>
 
-      {overall.length > 1 && (
-        <div className="card">
-          <p className="small muted" style={{ marginTop: 0 }}>
-            Overall score per interview, oldest first.
-          </p>
-          <div className="row" style={{ alignItems: "flex-end", gap: 8, minHeight: 90 }}>
-            {overall.map((point) => (
-              <div key={point.id} style={{ textAlign: "center", flex: "0 0 44px" }}>
-                <div
-                  title={`${pct(point.score)} on ${formatDate(point.at)}`}
-                  style={{
-                    height: Math.max(4, Math.round(point.score * 72)),
-                    background: "currentColor",
-                    opacity: 0.75,
-                    borderRadius: 3,
-                  }}
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        {overall.length > 1 && (
+          <GlowCard className="p-6">
+            <div className="mb-5 flex items-center gap-2 text-xs tracking-wide text-faint uppercase">
+              <TrendingUp aria-hidden="true" className="h-3.5 w-3.5" />
+              Overall per interview, oldest first
+            </div>
+            <div className="flex min-h-28 flex-wrap items-end gap-3">
+              {overall.map((point) => (
+                <div key={point.id} className="group/bar flex w-11 flex-col items-center gap-1.5">
+                  <div
+                    title={`${pct(point.score)} on ${formatDate(point.at)}`}
+                    style={{ height: Math.max(6, Math.round(point.score * 84)) }}
+                    className={cn(
+                      "w-full rounded-md bg-gradient-to-t from-accent-deep to-accent-cool",
+                      "shadow-[0_0_18px_-6px_rgba(139,92,246,0.9)]",
+                      "transition-all duration-300 group-hover/bar:brightness-125",
+                    )}
+                  />
+                  <span className="font-mono text-[0.7rem] text-faint">{pct(point.score)}</span>
+                </div>
+              ))}
+            </div>
+          </GlowCard>
+        )}
+
+        <Card className="p-6">
+          <div className="space-y-4">
+            {rows.map((row) => (
+              <div key={row.competency_id}>
+                <div className="mb-1.5 flex items-baseline justify-between gap-3">
+                  <code className="truncate font-mono text-xs text-accent-soft">
+                    {row.competency_id}
+                  </code>
+                  <span className="shrink-0 font-mono text-xs text-ink">
+                    {pct(row.score)} <DeltaLabel delta={row.delta} />
+                  </span>
+                </div>
+                <Meter
+                  percent={row.score * 100}
+                  valueNow={Math.round(row.score * 100)}
+                  ariaLabel={`${row.competency_id} score`}
                 />
-                <span className="small muted mono">{pct(point.score)}</span>
               </div>
             ))}
           </div>
-        </div>
-      )}
-
-      <div className="card stack">
-        <p className="small muted" style={{ margin: 0 }}>
-          Weakest first — that ordering is the point of the page.
-        </p>
-        {rows.map((row) => (
-          <div key={row.competency_id}>
-            <div className="row" style={{ justifyContent: "space-between", alignItems: "baseline" }}>
-              <code className="small">{row.competency_id}</code>
-              <span className="small mono">
-                {pct(row.score)} <DeltaLabel delta={row.delta} />
-              </span>
-            </div>
-            <div
-              className="meter"
-              role="progressbar"
-              aria-valuenow={Math.round(row.score * 100)}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label={`${row.competency_id} score`}
-              style={{ marginTop: 4 }}
-            >
-              <span style={{ width: `${Math.round(row.score * 100)}%` }} />
-            </div>
-          </div>
-        ))}
+        </Card>
       </div>
     </section>
   );
@@ -222,73 +228,80 @@ function HistorySection({
 }) {
   return (
     <section>
-      <h2>Your interviews</h2>
-      {loading && <p className="muted">Loading…</p>}
+      <SectionHeading>Your interviews</SectionHeading>
+
+      {loading && <p className="text-sm text-muted">Loading…</p>}
       {!loading && sessions.length === 0 && (
-        <div className="card">
-          <p style={{ marginTop: 0 }}>Nothing here yet.</p>
-          <Link href="/practice">
-            <button>Start your first session</button>
-          </Link>
-        </div>
+        <Card className="flex flex-col items-start gap-4 p-8">
+          <p className="text-sm text-muted">Nothing here yet.</p>
+          <LinkButton href="/practice">Start your first session</LinkButton>
+        </Card>
       )}
 
-      <div className="stack">
+      <div className="space-y-3">
         {sessions.map((session) => (
-          <div
-            className="card row"
-            key={session.id}
-            style={{ justifyContent: "space-between", alignItems: "center", gap: 16 }}
-          >
-            <div>
-              <div className="row small" style={{ gap: 10 }}>
-                <strong>{formatDate(session.completed_at ?? session.created_at)}</strong>
-                <span className="muted">
-                  {session.mode} · {session.seniority} · {session.question_count} questions
+          <GlowCard key={session.id} className="p-5">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <strong className="text-sm font-semibold text-ink">
+                    {formatDate(session.completed_at ?? session.created_at)}
+                  </strong>
+                  <Badge>{session.mode}</Badge>
+                  <Badge>{session.seniority}</Badge>
+                  <Badge>{session.question_count} questions</Badge>
+                </div>
+                <span className="mt-1.5 block text-xs text-muted">
+                  {describeStatus(session.status)}
                 </span>
               </div>
-              <span className="small muted">{describeStatus(session.status)}</span>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {RESUMABLE.has(session.status) && (
+                  <LinkButton href={`/interview/${session.id}`} size="sm">
+                    Continue
+                  </LinkButton>
+                )}
+                {REPORTABLE.has(session.status) && (
+                  <LinkButton href={`/report/${session.id}`} variant="secondary" size="sm">
+                    Open report
+                  </LinkButton>
+                )}
+                {confirming === session.id ? (
+                  <>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={deleting}
+                      onClick={() => onDelete(session.id)}
+                    >
+                      {deleting ? "Deleting…" : "Delete permanently"}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => onConfirm(null)}>
+                      Keep
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Delete the interview from ${formatDate(session.created_at)}`}
+                    onClick={() => onConfirm(session.id)}
+                  >
+                    <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                    Delete
+                  </Button>
+                )}
+              </div>
             </div>
-            {RESUMABLE.has(session.status) && (
-              <Link href={`/interview/${session.id}`}>
-                <button>Continue</button>
-              </Link>
-            )}
-            {REPORTABLE.has(session.status) && (
-              <Link href={`/report/${session.id}`}>
-                <button className="secondary">Open report</button>
-              </Link>
-            )}
-            {confirming === session.id ? (
-              <span className="row small" style={{ gap: 8 }}>
-                <button
-                  className="secondary"
-                  disabled={deleting}
-                  onClick={() => onDelete(session.id)}
-                >
-                  {deleting ? "Deleting…" : "Delete permanently"}
-                </button>
-                <button className="secondary" onClick={() => onConfirm(null)}>
-                  Keep
-                </button>
-              </span>
-            ) : (
-              <button
-                className="secondary"
-                aria-label={`Delete the interview from ${formatDate(session.created_at)}`}
-                onClick={() => onConfirm(session.id)}
-              >
-                Delete
-              </button>
-            )}
-          </div>
+          </GlowCard>
         ))}
       </div>
 
       {hasMore && (
-        <button className="secondary" disabled={loadingMore} onClick={onLoadMore}>
+        <Button variant="secondary" className="mt-4" disabled={loadingMore} onClick={onLoadMore}>
           {loadingMore ? "Loading…" : "Load older"}
-        </button>
+        </Button>
       )}
     </section>
   );
@@ -301,11 +314,11 @@ function HistorySection({
  * is the same information a sighted user gets from the triangle.
  */
 function DeltaLabel({ delta }: { delta: number | null }) {
-  if (delta === null) return <span className="muted"> · first time</span>;
-  if (Math.abs(delta) < 0.005) return <span className="muted"> · no change</span>;
+  if (delta === null) return <span className="text-faint"> · first time</span>;
+  if (Math.abs(delta) < 0.005) return <span className="text-faint"> · no change</span>;
   const up = delta > 0;
   return (
-    <span className="muted">
+    <span className={up ? "text-covered" : "text-missed"}>
       {" "}
       · {up ? "▲" : "▼"} {up ? "up" : "down"} {Math.abs(Math.round(delta * 100))} pts
     </span>
@@ -341,28 +354,31 @@ function DangerZone({ onClose, pending }: { onClose: () => void; pending: boolea
   const [armed, setArmed] = useState(false);
   return (
     <section>
-      <h2>Your data</h2>
-      <div className="card stack">
-        <p className="small muted" style={{ margin: 0 }}>
-          Everything here is kept for up to <strong>6 months</strong> and then deleted
+      <SectionHeading>Your data</SectionHeading>
+      <Card className="border-missed/20 bg-missed/[0.03] p-6">
+        <p className="text-sm leading-relaxed text-muted">
+          Everything here is kept for up to{" "}
+          <strong className="font-medium text-ink">6 months</strong> and then deleted
           automatically — transcripts included, not just uploaded files. You can delete any single
           interview above, or remove the account entirely.
         </p>
-        {armed ? (
-          <div className="row">
-            <button className="secondary" disabled={pending} onClick={onClose}>
-              {pending ? "Deleting…" : "Yes, delete my account and every interview"}
-            </button>
-            <button className="secondary" onClick={() => setArmed(false)}>
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button className="secondary" onClick={() => setArmed(true)}>
-            Delete my account
-          </button>
-        )}
-      </div>
+        <div className="mt-5 flex flex-wrap gap-2">
+          {armed ? (
+            <>
+              <Button variant="danger" disabled={pending} onClick={onClose}>
+                {pending ? "Deleting…" : "Yes, delete my account and every interview"}
+              </Button>
+              <Button variant="ghost" onClick={() => setArmed(false)}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button variant="secondary" onClick={() => setArmed(true)}>
+              Delete my account
+            </Button>
+          )}
+        </div>
+      </Card>
     </section>
   );
 }

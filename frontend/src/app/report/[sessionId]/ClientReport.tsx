@@ -1,6 +1,9 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { LinkButton } from "@/components/ui/button";
+import { ErrorNote } from "@/components/ui/feedback";
+import { PageHeader, Shell } from "@/components/ui/shell";
 import { ApiError, api } from "@/lib/api";
 import type { SessionReport } from "@/lib/types";
 import { ReportBody } from "./ReportBody";
@@ -47,9 +50,9 @@ export function ClientReport({ sessionId }: { sessionId: string }) {
 
   if (report.isLoading) {
     return (
-      <div className="shell">
-        <p className="muted">Loading your report…</p>
-      </div>
+      <Shell width="wide">
+        <p className="animate-pulse text-sm text-muted">Loading your report…</p>
+      </Shell>
     );
   }
 
@@ -58,11 +61,17 @@ export function ClientReport({ sessionId }: { sessionId: string }) {
   if (report.isError || !report.data) {
     const problem = report.error as ApiError | null;
     return (
-      <div className="shell">
-        <h1>Report unavailable</h1>
-        <p className="error">{problem?.message ?? "That report could not be loaded."}</p>
-        {problem?.status === 401 && <a href="/login">Sign in</a>}
-      </div>
+      <Shell>
+        <PageHeader title="Report unavailable" />
+        <ErrorNote role="alert">
+          {problem?.message ?? "That report could not be loaded."}
+        </ErrorNote>
+        {problem?.status === 401 && (
+          <LinkButton href="/login" className="mt-5">
+            Sign in
+          </LinkButton>
+        )}
+      </Shell>
     );
   }
 
